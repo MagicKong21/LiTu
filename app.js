@@ -36,6 +36,12 @@ const DOWNLOAD_DIR_KEY = "lizhi.downloadDir.v1";
 const MAX_DISTRIBUTION_VERSIONS = 4;
 const ANNOTATION_NUMBER_SIZE = 110;
 const ANNOTATION_HANDLE_SIZE = 18;
+const IMAGE_EXPORT_WIDTH = 2000;
+const SYSTEM_CORNER_RADIUS = 32;
+const CONTINUOUS_CORNER_EXPONENT = 4;
+const CONTINUOUS_CORNER_EXTENT = 1.52866483;
+const BLUE_BG_SHADOW_BLUR = 38;
+const BLUE_BG_SHADOW_OFFSET_Y = 18;
 const BLUE_BG_ASSET_URL = "./assets/lizhi-blue-wallpaper.png";
 const BG_HEADER_ASSET_URL = "./assets/IMG_header.png";
 const BG_FOOTER_ASSET_URL = "./assets/IMG_footer.png";
@@ -46,6 +52,7 @@ const blueBgState = {
   background: null,
   layers: [],
   selectedId: null,
+  selectedIds: [],
   nextId: 1,
   interaction: null,
   sourceName: "",
@@ -58,10 +65,12 @@ const blueBgState = {
 };
 let bgMaterials = [];
 let bgSelectedMaterialIndex = -1;
+let bgSelectedMaterialIndices = [];
 let bgGeneratedResults = [];
 let bgHistory = [];
 let bgHistoryIndex = -1;
 const bgRenderControllers = new WeakMap();
+let bgDecorAssetsPromise = null;
 const imageEditorState = {
   documentCanvas: document.createElement("canvas"),
   sourceName: "",
@@ -85,6 +94,7 @@ const annotationState = {
   mode: "view",
   items: [],
   selectedId: null,
+  selectedIds: [],
   nextNumber: 1,
   nextId: 1,
   interaction: null,
@@ -152,6 +162,34 @@ function syncCanvasSelectionOverlay(stage, canvas, overlay, bounds) {
   overlay.style.top = `${canvasRect.top - stageRect.top + stage.scrollTop + bounds.y * scaleY}px`;
   overlay.style.width = `${Math.max(2, bounds.width * scaleX)}px`;
   overlay.style.height = `${Math.max(2, bounds.height * scaleY)}px`;
+}
+
+function unionBounds(boundsList) {
+  const valid = boundsList.filter(Boolean);
+  if (!valid.length) return null;
+  const left = Math.min(...valid.map(bounds => bounds.x));
+  const top = Math.min(...valid.map(bounds => bounds.y));
+  const right = Math.max(...valid.map(bounds => bounds.x + bounds.width));
+  const bottom = Math.max(...valid.map(bounds => bounds.y + bounds.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function syncCanvasSelectionOverlays(stage, canvas, primaryOverlay, selections) {
+  if (!stage || !canvas || !primaryOverlay) return;
+  $$(".multi-selection-overlay", stage).forEach(overlay => overlay.remove());
+  if (!selections.length) {
+    syncCanvasSelectionOverlay(stage, canvas, primaryOverlay, null);
+    return;
+  }
+  selections.forEach((selection, index) => {
+    const overlay = index === 0 ? primaryOverlay : primaryOverlay.cloneNode(true);
+    if (index > 0) {
+      overlay.removeAttribute("id");
+      overlay.classList.add("multi-selection-overlay");
+      stage.appendChild(overlay);
+    }
+    syncCanvasSelectionOverlay(stage, canvas, overlay, selection.bounds);
+  });
 }
 
 const selectionCursorByHandle = {
@@ -1190,12 +1228,11 @@ function applyBlueBgZoom(zoom) {
   canvas.style.imageRendering = blueBgState.zoom >= 4 ? "pixelated" : "auto";
   $("#blueBgStage").classList.toggle("at-base-zoom", blueBgState.zoom <= 1.001);
   requestAnimationFrame(() => {
-    const selected = selectedBlueBgLayer();
-    syncCanvasSelectionOverlay(
+    syncCanvasSelectionOverlays(
       $("#blueBgStage"),
       canvas,
       $("#blueBgSelectionOverlay"),
-      selected ? { x: selected.x, y: selected.y, width: selected.width, height: selected.height } : null
+      blueBgSelectionEntries()
     );
   });
 }
@@ -1274,38 +1311,195 @@ async function loadBlueBgFile(file) {
   }
 }
 
-function blueBgRoundedRect(ctx, x, y, width, height, radius) {
-  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+function loadBgDecorAssets() {
+  if (!bgDecorAssetsPromise) {
+    bgDecorAssetsPromise = Promise.all([
+      loadImageSource(BG_HEADER_ASSET_URL),
+      loadImageSource(BG_FOOTER_ASSET_URL),
+    ]);
+  }
+  return bgDecorAssetsPromise;
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error("浏览器无法生成 PNG，请换一张图片重试。"));
+    }, "image/png");
+  });
+}
+
+function detectClientBgMode(ctx, width, height) {
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  const step = Math.max(1, Math.round(Math.min(width, height) / 180));
+  const border = Math.max(step, Math.round(Math.min(width, height) * 0.015));
+  let sampled = 0;
+  let transparent = 0;
+  let edgeOpaque = 0;
+  let edgeWhite = 0;
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const offset = (y * width + x) * 4;
+      const alpha = pixels[offset + 3];
+      sampled += 1;
+      if (alpha < 245) transparent += 1;
+      const edge = x < border || y < border || x >= width - border || y >= height - border;
+      if (!edge || alpha < 245) continue;
+      edgeOpaque += 1;
+      const red = pixels[offset];
+      const green = pixels[offset + 1];
+      const blue = pixels[offset + 2];
+      const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
+      const saturation = Math.max(red, green, blue) - Math.min(red, green, blue);
+      if ((red >= 245 && green >= 245 && blue >= 245) || (luminance >= 235 && saturation <= 18)) {
+        edgeWhite += 1;
+      }
+    }
+  }
+  if (sampled && transparent / sampled >= 0.03) return "transparent";
+  if (edgeOpaque && edgeWhite / edgeOpaque >= 0.4) return "white-edge";
+  return "manual";
+}
+
+function bgCanvasDimensions(width, height, scalePercent) {
+  const scaleRatio = Math.min(scalePercent, 100) / 100;
+  const aspect = width / height;
+  const compensation = Math.min(Math.abs(aspect - 1), 1) * 0.15;
+  let canvasWidth;
+  let canvasHeight;
+  if (aspect < 1) {
+    canvasWidth = Math.round(width / scaleRatio);
+    canvasHeight = Math.round(height / scaleRatio * (1 - compensation));
+  } else if (aspect > 1) {
+    canvasWidth = Math.round(width / scaleRatio * (1 - compensation));
+    canvasHeight = Math.round(height / scaleRatio);
+  } else {
+    canvasWidth = Math.round(width / scaleRatio);
+    canvasHeight = Math.round(height / scaleRatio);
+  }
+  const tightness = scalePercent > 100 ? Math.min((scalePercent - 100) / 50, 1) : 0;
+  const marginRatio = scalePercent > 100 ? Math.max(0.01, 0.035 * (1 - tightness)) : 0.035;
+  const minXMargin = scalePercent > 100 ? Math.max(8, Math.round(width * marginRatio)) : Math.max(40, Math.round(width * marginRatio));
+  const minYMargin = scalePercent > 100 ? Math.max(6, Math.round(height * marginRatio)) : Math.max(32, Math.round(height * marginRatio));
+  return {
+    width: Math.max(canvasWidth, width + minXMargin * 2),
+    height: Math.max(canvasHeight, height + minYMargin * 2),
+  };
+}
+
+async function renderBgInBrowser(file, scalePercent, withShadow, withRound, signal) {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const [{ image }, [header, footer]] = await Promise.all([
+    loadBlueBgFile(file),
+    loadBgDecorAssets(),
+  ]);
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const workingScale = IMAGE_EXPORT_WIDTH / Math.max(image.naturalWidth, image.naturalHeight);
+  const foregroundScale = Math.max(1, Number(scalePercent) / 100);
+  const sourceWidth = Math.max(1, Math.round(image.naturalWidth * workingScale * foregroundScale));
+  const sourceHeight = Math.max(1, Math.round(image.naturalHeight * workingScale * foregroundScale));
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = sourceWidth;
+  sourceCanvas.height = sourceHeight;
+  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  sourceCtx.imageSmoothingEnabled = true;
+  sourceCtx.imageSmoothingQuality = "high";
+  sourceCtx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
+  const mode = detectClientBgMode(sourceCtx, sourceWidth, sourceHeight);
+
+  const sigma = Math.max(2, Math.min(50, Math.round(Math.min(sourceWidth, sourceHeight) / 33)));
+  const pad = withShadow ? Math.max(8, sigma * 2) : 0;
+  const preliminary = bgCanvasDimensions(sourceWidth + pad * 2, sourceHeight + pad * 2, Number(scalePercent));
+  const cornerRadius = Math.max(1, Math.round(SYSTEM_CORNER_RADIUS * preliminary.width / IMAGE_EXPORT_WIDTH));
+  const foreground = document.createElement("canvas");
+  foreground.width = sourceWidth + pad * 2;
+  foreground.height = sourceHeight + pad * 2;
+  const foregroundCtx = foreground.getContext("2d");
+  if (withShadow) {
+    foregroundCtx.save();
+    foregroundCtx.shadowColor = "rgba(0, 0, 0, .25)";
+    foregroundCtx.shadowBlur = sigma * 2;
+    foregroundCtx.fillStyle = "rgba(255, 255, 255, 1)";
+    continuousRoundedRect(foregroundCtx, pad, pad, sourceWidth, sourceHeight, withRound ? cornerRadius : 0);
+    foregroundCtx.fill();
+    foregroundCtx.restore();
+  }
+  foregroundCtx.save();
+  continuousRoundedRect(foregroundCtx, pad, pad, sourceWidth, sourceHeight, withRound ? cornerRadius : 0);
+  foregroundCtx.clip();
+  foregroundCtx.drawImage(sourceCanvas, pad, pad);
+  foregroundCtx.restore();
+
+  const dimensions = bgCanvasDimensions(foreground.width, foreground.height, Number(scalePercent));
+  const canvas = document.createElement("canvas");
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#8cc6ff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const headerHeight = Math.round(header.naturalHeight * canvas.width / header.naturalWidth);
+  const footerHeight = Math.round(footer.naturalHeight * canvas.width / footer.naturalWidth);
+  ctx.drawImage(header, 0, 0, canvas.width, headerHeight);
+  ctx.drawImage(footer, 0, canvas.height - footerHeight, canvas.width, footerHeight);
+  ctx.drawImage(foreground, Math.floor((canvas.width - foreground.width) / 2), Math.floor((canvas.height - foreground.height) / 2));
+
+  const output = canvasScaledToWidth(canvas);
+  const blob = await canvasToPngBlob(output);
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  return { blob, mode, appliedShadow: withShadow, appliedRound: withRound };
+}
+
+function continuousRoundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.max(0, Math.min(radius * CONTINUOUS_CORNER_EXTENT, width / 2, height / 2));
+  const power = 2 / CONTINUOUS_CORNER_EXPONENT;
+  const steps = 24;
+  const addCorner = (centerX, centerY, xSign, ySign, start, end) => {
+    for (let index = 0; index <= steps; index++) {
+      const angle = start + (end - start) * index / steps;
+      const offsetX = r * Math.pow(Math.abs(Math.cos(angle)), power);
+      const offsetY = r * Math.pow(Math.abs(Math.sin(angle)), power);
+      ctx.lineTo(centerX + xSign * offsetX, centerY + ySign * offsetY);
+    }
+  };
   ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.lineTo(x + width - r, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  addCorner(x + width - r, y + r, 1, -1, Math.PI / 2, 0);
   ctx.lineTo(x + width, y + height - r);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  addCorner(x + width - r, y + height - r, 1, 1, 0, Math.PI / 2);
   ctx.lineTo(x + r, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  addCorner(x + r, y + height - r, -1, 1, Math.PI / 2, 0);
   ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
+  addCorner(x + r, y + r, -1, -1, 0, Math.PI / 2);
   ctx.closePath();
 }
 
 function drawBlueBgLayer(ctx, layer) {
-  const radius = layer.round ? Math.max(10, Math.min(layer.width, layer.height) * 0.025) : 0;
+  const radius = layer.round ? Math.min(SYSTEM_CORNER_RADIUS, layer.width / 2, layer.height / 2) : 0;
   if (layer.shadow) {
     ctx.save();
     ctx.shadowColor = "rgba(15, 23, 42, .28)";
-    ctx.shadowBlur = 38;
-    ctx.shadowOffsetY = 18;
+    ctx.shadowBlur = BLUE_BG_SHADOW_BLUR;
+    ctx.shadowOffsetY = BLUE_BG_SHADOW_OFFSET_Y;
     ctx.fillStyle = "rgba(255, 255, 255, .96)";
-    blueBgRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
+    continuousRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
     ctx.fill();
     ctx.restore();
   }
   ctx.save();
-  blueBgRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
+  continuousRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
   ctx.clip();
   ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
   ctx.restore();
+}
+
+function blueBgLayerVisualGeometry(layer) {
+  return {
+    bounds: { x: layer.x, y: layer.y, width: layer.width, height: layer.height },
+    outsets: { left: 0, right: 0, top: 0, bottom: 0 },
+  };
 }
 
 function blueBgHandles(layer) {
@@ -1319,7 +1513,11 @@ function blueBgHandles(layer) {
 
 function renderBlueBgCanvas(forExport = false, targetCanvas = blueBgCanvas()) {
   if (!blueBgState.background) {
-    if (!forExport) $("#blueBgSelectionOverlay").hidden = true;
+    if (!forExport) {
+      syncCanvasSelectionOverlays(
+        $("#blueBgStage"), targetCanvas, $("#blueBgSelectionOverlay"), []
+      );
+    }
     return;
   }
   targetCanvas.width = blueBgState.background.naturalWidth;
@@ -1330,12 +1528,11 @@ function renderBlueBgCanvas(forExport = false, targetCanvas = blueBgCanvas()) {
   blueBgState.layers.forEach(layer => drawBlueBgLayer(ctx, layer));
   if (forExport) return;
   drawCanvasSnapGuides(ctx, targetCanvas, blueBgState.snapGuides);
-  const selected = blueBgState.layers.find(layer => layer.id === blueBgState.selectedId);
-  syncCanvasSelectionOverlay(
+  syncCanvasSelectionOverlays(
     $("#blueBgStage"),
     targetCanvas,
     $("#blueBgSelectionOverlay"),
-    selected ? { x: selected.x, y: selected.y, width: selected.width, height: selected.height } : null
+    blueBgSelectionEntries()
   );
 }
 
@@ -1343,13 +1540,42 @@ function selectedBlueBgLayer() {
   return blueBgState.layers.find(layer => layer.id === blueBgState.selectedId) || null;
 }
 
+function selectedBlueBgLayers() {
+  const ids = blueBgState.selectedIds.length
+    ? new Set(blueBgState.selectedIds)
+    : new Set(blueBgState.selectedId === null ? [] : [blueBgState.selectedId]);
+  return blueBgState.layers.filter(layer => ids.has(layer.id));
+}
+
+function blueBgSelectionBounds() {
+  return unionBounds(selectedBlueBgLayers().map(layer => blueBgLayerVisualGeometry(layer).bounds));
+}
+
+function blueBgSelectionEntries() {
+  return selectedBlueBgLayers()
+    .map(layer => ({ id: layer.id, bounds: blueBgLayerVisualGeometry(layer).bounds }))
+    .sort((a, b) => Number(b.id === blueBgState.selectedId) - Number(a.id === blueBgState.selectedId));
+}
+
 function selectedDefaultBgMaterial() {
   return bgMaterials[bgSelectedMaterialIndex] || null;
 }
 
+function selectedDefaultBgMaterialIndexes() {
+  if (bgSelectedMaterialIndices.length) {
+    return bgSelectedMaterialIndices.filter(index => index >= 0 && index < bgMaterials.length);
+  }
+  return bgSelectedMaterialIndex >= 0 ? [bgSelectedMaterialIndex] : [];
+}
+
+function selectedDefaultBgMaterials() {
+  return selectedDefaultBgMaterialIndexes().map(index => bgMaterials[index]).filter(Boolean);
+}
+
 function syncBgEffectToolbar() {
   const blueprint = $("#bgBlueMode").checked;
-  const selected = blueprint ? selectedBlueBgLayer() : selectedDefaultBgMaterial();
+  const selectedItems = blueprint ? selectedBlueBgLayers() : selectedDefaultBgMaterials();
+  const selected = selectedItems[0] || null;
   const disabled = !selected;
   const toolbar = $("#bgEffectToolbar");
   toolbar.classList.toggle("is-disabled", disabled);
@@ -1362,6 +1588,8 @@ function syncBgEffectToolbar() {
   if (selected) {
     $("#bgEffectShadow").checked = selected.shadow;
     $("#bgEffectRound").checked = selected.round;
+    $("#bgEffectShadow").indeterminate = selectedItems.some(item => item.shadow !== selected.shadow);
+    $("#bgEffectRound").indeterminate = selectedItems.some(item => item.round !== selected.round);
     const scale = blueprint
       ? Math.round(selected.width / selected.fitWidth * 100)
       : selected.scale;
@@ -1370,6 +1598,8 @@ function syncBgEffectToolbar() {
   } else {
     $("#bgEffectShadow").checked = false;
     $("#bgEffectRound").checked = false;
+    $("#bgEffectShadow").indeterminate = false;
+    $("#bgEffectRound").indeterminate = false;
     $("#bgEffectScaleValue").textContent = "—";
   }
 }
@@ -1398,6 +1628,7 @@ async function addBlueBgFiles(fileList, reset = false) {
   if (reset) {
     blueBgState.layers = [];
     blueBgState.selectedId = null;
+    blueBgState.selectedIds = [];
     blueBgState.nextId = 1;
     blueBgState.sourceName = files[0].name;
   }
@@ -1405,6 +1636,7 @@ async function addBlueBgFiles(fileList, reset = false) {
   const accepted = files.slice(0, Math.max(0, available));
   for (const file of accepted) {
     const { image, fileName } = await loadBlueBgFile(file);
+    const material = bgMaterials.find(candidate => candidate.file === file);
     const fit = Math.min(
       blueBgCanvas().width * 0.68 / image.naturalWidth,
       blueBgCanvas().height * 0.72 / image.naturalHeight
@@ -1416,6 +1648,7 @@ async function addBlueBgFiles(fileList, reset = false) {
       id: blueBgState.nextId++,
       image,
       fileName,
+      previewUrl: material?.previewUrl || "",
       baseWidth: image.naturalWidth,
       baseHeight: image.naturalHeight,
       fitWidth: width,
@@ -1431,6 +1664,7 @@ async function addBlueBgFiles(fileList, reset = false) {
     clampBlueBgLayer(layer);
     blueBgState.layers.push(layer);
     blueBgState.selectedId = layer.id;
+    blueBgState.selectedIds = [];
   }
   updateBlueBgControls();
   renderBlueBgCanvas();
@@ -1461,18 +1695,14 @@ function blueBgPointerPosition(event) {
 }
 
 function blueBgPointInLayer(layer, point) {
-  return point.x >= layer.x && point.x <= layer.x + layer.width &&
-    point.y >= layer.y && point.y <= layer.y + layer.height;
+  const bounds = blueBgLayerVisualGeometry(layer).bounds;
+  return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+    point.y >= bounds.y && point.y <= bounds.y + bounds.height;
 }
 
 function blueBgHitHandle(layer, point) {
   if (!layer) return null;
-  return hitSelectionHandle({
-    x: layer.x,
-    y: layer.y,
-    width: layer.width,
-    height: layer.height,
-  }, point, blueBgCanvas(), 14);
+  return hitSelectionHandle(blueBgLayerVisualGeometry(layer).bounds, point, blueBgCanvas(), 14);
 }
 
 function blueBgPointerDown(event) {
@@ -1480,24 +1710,61 @@ function blueBgPointerDown(event) {
   const canvas = blueBgCanvas();
   blueBgState.snapGuides = emptySnapGuides();
   const point = blueBgPointerPosition(event);
-  const selected = selectedBlueBgLayer();
-  const handle = blueBgHitHandle(selected, point);
-  if (handle) {
+  const selectedLayers = selectedBlueBgLayers();
+  const layer = [...blueBgState.layers].reverse().find(candidate => blueBgPointInLayer(candidate, point));
+  const multiKey = event.metaKey || event.ctrlKey;
+  if (multiKey) {
+    if (layer) {
+      const ids = new Set(selectedLayers.map(candidate => candidate.id));
+      const adding = !ids.has(layer.id);
+      if (adding) ids.add(layer.id);
+      else ids.delete(layer.id);
+      blueBgState.selectedIds = [...ids];
+      blueBgState.selectedId = adding ? layer.id : (blueBgState.selectedIds.at(-1) ?? null);
+      const updatedSelection = selectedBlueBgLayers();
+      blueBgState.interaction = adding ? {
+        mode: updatedSelection.length > 1 ? "move-group" : "move",
+        id: layer.id,
+        start: point,
+        original: { ...layer },
+        originals: updatedSelection.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y })),
+      } : null;
+    } else {
+      blueBgState.interaction = null;
+    }
+    canvas.setPointerCapture?.(event.pointerId);
+    $("#blueBgStage").focus();
+    updateBlueBgControls();
+    renderBlueBgCanvas();
+    event.preventDefault();
+    return;
+  }
+  const handleTarget = [...selectedLayers]
+    .reverse()
+    .map(candidate => ({ layer: candidate, handle: blueBgHitHandle(candidate, point) }))
+    .find(candidate => candidate.handle);
+  if (handleTarget) {
     blueBgState.interaction = {
       mode: "resize",
-      id: selected.id,
-      handle,
+      id: handleTarget.layer.id,
+      handle: handleTarget.handle,
       start: point,
-      original: { ...selected },
+      original: { ...handleTarget.layer },
     };
   } else {
-    const layer = [...blueBgState.layers].reverse().find(candidate => blueBgPointInLayer(candidate, point));
-    blueBgState.selectedId = layer?.id ?? null;
+    const movingSelection = layer && selectedLayers.some(candidate => candidate.id === layer.id);
+    if (!movingSelection) {
+      blueBgState.selectedId = layer?.id ?? null;
+      blueBgState.selectedIds = [];
+    }
     blueBgState.interaction = layer ? {
-      mode: "move",
+      mode: movingSelection && selectedLayers.length > 1 ? "move-group" : "move",
       id: layer.id,
       start: point,
       original: { ...layer },
+      originals: movingSelection
+        ? selectedLayers.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y }))
+        : null,
     } : null;
   }
   canvas.setPointerCapture?.(event.pointerId);
@@ -1510,23 +1777,47 @@ function blueBgPointerDown(event) {
 function blueBgPointerMove(event) {
   const interaction = blueBgState.interaction;
   if (!interaction) {
-    const selected = selectedBlueBgLayer();
+    const selectedLayers = selectedBlueBgLayers();
     const point = blueBgPointerPosition(event);
-    const handle = blueBgHitHandle(selected, point);
+    const handle = [...selectedLayers]
+      .reverse()
+      .map(layer => blueBgHitHandle(layer, point))
+      .find(Boolean);
     blueBgCanvas().style.cursor = selectionCursorByHandle[handle] ||
-      (selected && blueBgPointInLayer(selected, point) ? "move" : "default");
+      (selectedLayers.some(layer => blueBgPointInLayer(layer, point)) ? "move" : "default");
     return;
   }
   const layer = blueBgState.layers.find(candidate => candidate.id === interaction.id);
   if (!layer) return;
   const point = blueBgPointerPosition(event);
-  if (interaction.mode === "move") {
+  if (interaction.mode === "move-group") {
+    const dx = point.x - interaction.start.x;
+    const dy = point.y - interaction.start.y;
+    interaction.originals.forEach(original => {
+      const candidate = blueBgState.layers.find(item => item.id === original.id);
+      if (!candidate) return;
+      candidate.x = original.x + dx;
+      candidate.y = original.y + dy;
+    });
+    const canvas = blueBgCanvas();
+    const bounds = blueBgSelectionBounds();
+    const snapped = snapBoundsToCanvas(bounds, canvas, 12, true);
+    const offsetX = snapped.x - bounds.x;
+    const offsetY = snapped.y - bounds.y;
+    selectedBlueBgLayers().forEach(candidate => {
+      candidate.x += offsetX;
+      candidate.y += offsetY;
+      clampBlueBgLayer(candidate);
+    });
+    blueBgState.snapGuides = snapped.guides;
+  } else if (interaction.mode === "move") {
     layer.x = interaction.original.x + point.x - interaction.start.x;
     layer.y = interaction.original.y + point.y - interaction.start.y;
     const canvas = blueBgCanvas();
-    const snapped = snapBoundsToCanvas(layer, canvas, 12, true);
-    layer.x = snapped.x;
-    layer.y = snapped.y;
+    const visualBounds = blueBgLayerVisualGeometry(layer).bounds;
+    const snapped = snapBoundsToCanvas(visualBounds, canvas, 12, true);
+    layer.x += snapped.x - visualBounds.x;
+    layer.y += snapped.y - visualBounds.y;
     blueBgState.snapGuides = snapped.guides;
   } else {
     const canvas = blueBgCanvas();
@@ -1539,10 +1830,15 @@ function blueBgPointerMove(event) {
     const ySnap = interaction.handle.includes("n") || interaction.handle.includes("s")
       ? nearestSnap(point.y, [0, canvas.height / 2, canvas.height], toleranceY)
       : null;
+    const visualGeometry = blueBgLayerVisualGeometry(interaction.original);
     const resizePoint = {
       x: xSnap?.value ?? point.x,
       y: ySnap?.value ?? point.y,
     };
+    if (interaction.handle.includes("w")) resizePoint.x += visualGeometry.outsets.left;
+    if (interaction.handle.includes("e")) resizePoint.x -= visualGeometry.outsets.right;
+    if (interaction.handle.includes("n")) resizePoint.y += visualGeometry.outsets.top;
+    if (interaction.handle.includes("s")) resizePoint.y -= visualGeometry.outsets.bottom;
     blueBgState.snapGuides = {
       vertical: xSnap ? [xSnap.value] : [],
       horizontal: ySnap ? [ySnap.value] : [],
@@ -1614,6 +1910,7 @@ function blueBgContextMenu(event) {
   if (!layer) return;
   event.preventDefault();
   blueBgState.selectedId = layer.id;
+  blueBgState.selectedIds = [];
   updateBlueBgControls();
   renderBlueBgCanvas();
   const menu = $("#blueBgContextMenu");
@@ -1638,42 +1935,47 @@ function moveSelectedBlueBgLayer(direction) {
 }
 
 function updateBlueBgLayerOptions() {
-  const layer = selectedBlueBgLayer();
-  if (!layer) return;
-  layer.shadow = $("#bgEffectShadow").checked;
-  layer.round = $("#bgEffectRound").checked;
+  const layers = selectedBlueBgLayers();
+  if (!layers.length) return;
+  layers.forEach(layer => {
+    layer.shadow = $("#bgEffectShadow").checked;
+    layer.round = $("#bgEffectRound").checked;
+  });
   renderBlueBgCanvas();
 }
 
 function updateBlueBgLayerScale() {
-  const layer = selectedBlueBgLayer();
-  if (!layer) return;
-  const centerX = layer.x + layer.width / 2;
-  const centerY = layer.y + layer.height / 2;
+  const layers = selectedBlueBgLayers();
+  if (!layers.length) return;
   const scale = Number($("#bgEffectScale").value) / 100;
-  layer.width = layer.fitWidth * scale;
-  layer.height = layer.fitHeight * scale;
-  layer.x = centerX - layer.width / 2;
-  layer.y = centerY - layer.height / 2;
+  layers.forEach(layer => {
+    const centerX = layer.x + layer.width / 2;
+    const centerY = layer.y + layer.height / 2;
+    layer.width = layer.fitWidth * scale;
+    layer.height = layer.fitHeight * scale;
+    layer.x = centerX - layer.width / 2;
+    layer.y = centerY - layer.height / 2;
+  });
   updateBlueBgControls();
   renderBlueBgCanvas();
   blueBgStatus(`所选图片大小 ${Math.round(scale * 100)}% · 中心位置保持不变`);
 }
 
 function deleteBlueBgLayer() {
-  const index = blueBgState.layers.findIndex(layer => layer.id === blueBgState.selectedId);
-  if (index < 0) return;
-  blueBgState.layers.splice(index, 1);
+  const ids = new Set(selectedBlueBgLayers().map(layer => layer.id));
+  if (!ids.size) return;
+  blueBgState.layers = blueBgState.layers.filter(layer => !ids.has(layer.id));
   blueBgState.selectedId = blueBgState.layers.at(-1)?.id ?? null;
+  blueBgState.selectedIds = [];
   updateBlueBgControls();
   renderBlueBgCanvas();
   pushBgHistory();
-  blueBgStatus(`已删除所选图片 · 共 ${blueBgState.layers.length} 张图片`);
+  blueBgStatus(`已删除 ${ids.size} 张所选图片 · 共 ${blueBgState.layers.length} 张图片`);
 }
 
 function blueBgKeyDown(event) {
-  const layer = selectedBlueBgLayer();
-  if (!layer) return;
+  const layers = selectedBlueBgLayers();
+  if (!layers.length) return;
   if (event.key === "Delete" || event.key === "Backspace") {
     event.preventDefault();
     deleteBlueBgLayer();
@@ -1689,9 +1991,11 @@ function blueBgKeyDown(event) {
   if (!direction) return;
   event.preventDefault();
   const step = event.shiftKey ? 10 : 1;
-  layer.x += direction[0] * step;
-  layer.y += direction[1] * step;
-  clampBlueBgLayer(layer);
+  layers.forEach(layer => {
+    layer.x += direction[0] * step;
+    layer.y += direction[1] * step;
+    clampBlueBgLayer(layer);
+  });
   renderBlueBgCanvas();
   blueBgStatus(`已微调 ${step}px · 共 ${blueBgState.layers.length} 张图片`);
 }
@@ -1726,13 +2030,18 @@ function confirmBlueBgRender() {
   }, "image/png");
 }
 
-function sendBlueBgToAnnotation() {
-  if (!blueBgState.layers.length) {
-    blueBgStatus("请至少添加一张图片。");
+function sendBgToAnnotation() {
+  const blueprint = $("#bgBlueMode").checked;
+  if (!blueprint) {
+    const material = selectedDefaultBgMaterial();
+    if (!material?.outputBlob) return;
+    const file = new File([material.outputBlob], material.filename || `${material.file.name}-加底.png`, { type: "image/png" });
+    showTab("annotation");
+    loadAnnotationImage(file);
     return;
   }
-  const output = composeBlueBgOutputCanvas();
-  output.toBlob(blob => {
+  if (!blueBgState.layers.length) return;
+  composeBlueBgOutputCanvas().toBlob(blob => {
     if (!blob) {
       blueBgStatus("生成失败，请重试。");
       return;
@@ -1746,12 +2055,11 @@ function sendBlueBgToAnnotation() {
 
 function toggleBlueBgMode() {
   const enabled = $("#bgBlueMode").checked;
-  $("#bgModeToggleLabel").textContent = enabled ? "蓝底" : "默认";
-  $("#bgModeToggleButton").classList.toggle("active", enabled);
+  $("#bgModeToggleLabel").textContent = enabled ? "默认模式" : "蓝底模式";
+  $("#bgModeToggleButton").classList.toggle("active", !enabled);
   $("#bgModeToggleButton").setAttribute("aria-label", enabled ? "切换到默认模式" : "切换到蓝底模式");
   $("#bgModeToggleButton").title = enabled ? "切换到默认模式" : "切换到蓝底模式";
   $("#bgPreview").hidden = enabled;
-  $("#sendBlueBgToAnnotation").hidden = !enabled;
   $("#blueBgEditor").hidden = !enabled || !blueBgState.layers.length;
   renderBgMaterialList();
   renderBgPreviewList();
@@ -1796,6 +2104,7 @@ function clearBgMaterials() {
   });
   bgMaterials = [];
   bgSelectedMaterialIndex = -1;
+  bgSelectedMaterialIndices = [];
 }
 
 function setBgFiles(fileList) {
@@ -1816,9 +2125,11 @@ function setBgFiles(fileList) {
     renderTimer: null,
   }));
   bgSelectedMaterialIndex = bgMaterials.length ? 0 : -1;
+  bgSelectedMaterialIndices = [];
   bgGeneratedResults = [];
   blueBgState.layers = [];
   blueBgState.selectedId = null;
+  blueBgState.selectedIds = [];
   resetBgHistory();
   renderBgMaterialList();
   renderBgPreviewList();
@@ -1862,29 +2173,41 @@ function openBgMaterialInspector(index) {
   const material = bgMaterials[index];
   if (!material || $("#bgBlueMode").checked) return;
   bgSelectedMaterialIndex = index;
+  bgSelectedMaterialIndices = [];
   syncBgEffectToolbar();
   renderBgMaterialList();
   renderBgPreviewList();
+  updateBgExportState();
+}
+
+function toggleDefaultBgMaterialSelection(index) {
+  if ($("#bgBlueMode").checked || index < 0 || index >= bgMaterials.length) return;
+  const ids = new Set(selectedDefaultBgMaterialIndexes());
+  const adding = !ids.has(index);
+  if (adding) ids.add(index);
+  else ids.delete(index);
+  bgSelectedMaterialIndices = [...ids].sort((a, b) => a - b);
+  bgSelectedMaterialIndex = adding ? index : (bgSelectedMaterialIndices.at(-1) ?? -1);
+  renderBgMaterialList();
+  renderBgPreviewList();
+  syncBgEffectToolbar();
+  updateBgExportState();
 }
 
 function saveBgMaterialInspector() {
-  const material = bgMaterials[bgSelectedMaterialIndex];
-  if (!material || $("#bgBlueMode").checked) return;
-  material.scale = Math.max(40, Math.min(150, Number($("#bgEffectScale").value) || 90));
-  material.shadow = $("#bgEffectShadow").checked;
-  material.round = $("#bgEffectRound").checked;
-  material.outputBlob = null;
-  $("#bgEffectScaleValue").textContent = `${material.scale}%`;
-  updateBgMaterialCardMeta(bgSelectedMaterialIndex);
+  const indexes = selectedDefaultBgMaterialIndexes();
+  if (!indexes.length || $("#bgBlueMode").checked) return;
+  const scale = Math.max(40, Math.min(150, Number($("#bgEffectScale").value) || 90));
+  indexes.forEach(index => {
+    const material = bgMaterials[index];
+    material.scale = scale;
+    material.shadow = $("#bgEffectShadow").checked;
+    material.round = $("#bgEffectRound").checked;
+    material.outputBlob = null;
+    scheduleDefaultBgMaterialRender(index);
+  });
+  $("#bgEffectScaleValue").textContent = `${scale}%`;
   syncBgGeneratedResults();
-  scheduleDefaultBgMaterialRender(bgSelectedMaterialIndex);
-}
-
-function updateBgMaterialCardMeta(index) {
-  const material = bgMaterials[index];
-  const meta = $(`[data-bg-material-index="${index}"] small`, $("#bgMaterialList"));
-  if (!material || !meta) return;
-  meta.textContent = `${material.scale}% · ${material.shadow ? "阴影" : "无阴影"} · ${material.round ? "圆角" : "直角"}`;
 }
 
 function renderBgMaterialList() {
@@ -1896,59 +2219,49 @@ function renderBgMaterialList() {
   if ($("#bgBlueMode").checked) {
     blueBgState.layers.forEach((layer, index) => {
       const card = document.createElement("div");
-      card.className = `bg-material-card${layer.id === blueBgState.selectedId ? " active" : ""}`;
+      card.className = `bg-material-card${selectedBlueBgLayers().some(item => item.id === layer.id) ? " active" : ""}`;
       card.dataset.blueLayerId = String(layer.id);
       card.tabIndex = 0;
       card.setAttribute("role", "button");
-      const thumb = document.createElement("canvas");
-      thumb.width = 64;
-      thumb.height = 64;
-      const context = thumb.getContext("2d");
-      const scale = Math.min(64 / layer.image.naturalWidth, 64 / layer.image.naturalHeight);
-      const width = layer.image.naturalWidth * scale;
-      const height = layer.image.naturalHeight * scale;
-      context.drawImage(layer.image, (64 - width) / 2, (64 - height) / 2, width, height);
-      const label = document.createElement("span");
-      label.textContent = layer.fileName || `图片素材 ${index + 1}`;
-      const meta = document.createElement("small");
-      meta.textContent = "点击选中并打开设置";
-      label.appendChild(meta);
-      card.append(thumb, label);
+      card.setAttribute("aria-label", `选择素材 ${layer.fileName || `图片 ${index + 1}`}`);
+      const preview = document.createElement("div");
+      preview.className = "bg-material-preview";
+      const img = document.createElement("img");
+      img.src = layer.previewUrl;
+      img.alt = "";
+      preview.appendChild(img);
+      card.appendChild(preview);
       wrap.appendChild(card);
     });
   } else {
     bgMaterials.forEach((material, index) => {
       const card = document.createElement("div");
-      card.className = `bg-material-card${index === bgSelectedMaterialIndex ? " active" : ""}`;
+      card.className = `bg-material-card${selectedDefaultBgMaterialIndexes().includes(index) ? " active" : ""}`;
       card.dataset.bgMaterialIndex = String(index);
       card.tabIndex = 0;
       card.setAttribute("role", "button");
+      card.setAttribute("aria-label", `选择素材 ${material.file.name}`);
       const img = document.createElement("img");
       img.src = material.previewUrl;
       img.alt = "";
-      const label = document.createElement("span");
-      label.textContent = material.file.name;
-      const meta = document.createElement("small");
-      meta.textContent = `${material.scale}% · ${material.shadow ? "阴影" : "无阴影"} · ${material.round ? "圆角" : "直角"}`;
-      label.appendChild(meta);
-      const deleteButton = document.createElement("button");
-      deleteButton.type = "button";
-      deleteButton.className = "bg-material-delete";
-      deleteButton.dataset.deleteBgMaterial = String(index);
-      deleteButton.setAttribute("aria-label", `删除 ${material.file.name}`);
-      deleteButton.title = "删除素材";
-      deleteButton.innerHTML = '<span class="tool-symbol tool-symbol-delete"></span>';
-      card.append(img, label, deleteButton);
+      const preview = document.createElement("div");
+      preview.className = "bg-material-preview";
+      preview.appendChild(img);
+      card.appendChild(preview);
       wrap.appendChild(card);
     });
   }
-  if (!wrap.children.length) {
-    const empty = document.createElement("button");
-    empty.type = "button";
-    empty.className = "bg-material-empty canvas-empty-import";
-    empty.textContent = "导入图片";
-    wrap.appendChild(empty);
-  }
+  const importCard = document.createElement("div");
+  importCard.className = "bg-material-import-card";
+  const importButton = document.createElement("button");
+  importButton.type = "button";
+  importButton.className = "bg-material-import-button canvas-empty-import";
+  importButton.dataset.importBgMaterial = "";
+  importButton.textContent = "导入图片";
+  importButton.disabled = $("#bgBlueMode").checked && blueBgState.layers.length >= 3;
+  importButton.title = importButton.disabled ? "蓝底模式最多可导入 3 张图片" : "导入图片";
+  importCard.appendChild(importButton);
+  wrap.appendChild(importCard);
   if (scroller) scroller.scrollTop = scrollTop;
 }
 
@@ -1965,17 +2278,34 @@ function deleteDefaultBgMaterial(index) {
   pushBgHistory();
 }
 
+function deleteSelectedDefaultBgMaterials() {
+  const indexes = selectedDefaultBgMaterialIndexes().sort((a, b) => b - a);
+  if (!indexes.length) return;
+  indexes.forEach(index => bgMaterials.splice(index, 1));
+  bgSelectedMaterialIndices = [];
+  bgSelectedMaterialIndex = bgMaterials.length ? Math.min(indexes.at(-1), bgMaterials.length - 1) : -1;
+  renderBgMaterialList();
+  renderBgPreviewList();
+  syncBgGeneratedResults();
+  syncBgEffectToolbar();
+  pushBgHistory();
+}
+
 function deleteSelectedBgItem() {
   if ($("#bgBlueMode").checked) deleteBlueBgLayer();
-  else deleteDefaultBgMaterial(bgSelectedMaterialIndex);
+  else deleteSelectedDefaultBgMaterials();
 }
 
 function scrollToDefaultBgPreview(index) {
   const scroller = $(".bg-preview");
   const preview = $(`[data-bg-preview-index="${index}"]`, scroller);
   if (!scroller || !preview) return;
+  const scrollerRect = scroller.getBoundingClientRect();
+  const previewRect = preview.getBoundingClientRect();
+  const paddingTop = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+  const targetTop = scroller.scrollTop + previewRect.top - scrollerRect.top - scroller.clientTop - paddingTop;
   scroller.scrollTo({
-    top: Math.max(0, preview.offsetTop - 12),
+    top: Math.max(0, Math.min(targetTop, scroller.scrollHeight - scroller.clientHeight)),
     behavior: "smooth",
   });
 }
@@ -1989,6 +2319,9 @@ function batchDownloadBgResults() {
 function updateBgExportState() {
   const blueprint = $("#bgBlueMode").checked;
   $("#bgExportButton").disabled = blueprint ? !blueBgState.layers.length : !bgGeneratedResults.length;
+  $("#sendBlueBgToAnnotation").disabled = blueprint
+    ? !blueBgState.layers.length
+    : !selectedDefaultBgMaterial()?.outputBlob;
   $("#bgUndo").disabled = bgHistoryIndex <= 0;
   $("#bgRedo").disabled = bgHistoryIndex < 0 || bgHistoryIndex >= bgHistory.length - 1;
 }
@@ -1998,6 +2331,9 @@ function captureBgHistoryState() {
     materials: bgMaterials.map(material => ({ ...material, renderTimer: null })),
     layers: blueBgState.layers.map(layer => ({ ...layer })),
     selectedId: blueBgState.selectedId,
+    selectedIds: [...blueBgState.selectedIds],
+    selectedMaterialIndex: bgSelectedMaterialIndex,
+    selectedMaterialIndices: [...bgSelectedMaterialIndices],
   };
 }
 
@@ -2015,6 +2351,9 @@ function pushBgHistory() {
       shadow: layer.shadow, round: layer.round,
     })),
     selectedId: snapshot.selectedId,
+    selectedIds: snapshot.selectedIds,
+    selectedMaterialIndex: snapshot.selectedMaterialIndex,
+    selectedMaterialIndices: snapshot.selectedMaterialIndices,
   });
   if (bgHistory[bgHistoryIndex]?.signature === signature) return;
   bgHistory = bgHistory.slice(0, bgHistoryIndex + 1);
@@ -2039,9 +2378,11 @@ function restoreBgHistory(index) {
   });
   bgHistoryIndex = index;
   bgMaterials = entry.snapshot.materials.map(material => ({ ...material, renderTimer: null }));
-  bgSelectedMaterialIndex = Math.min(bgSelectedMaterialIndex, bgMaterials.length - 1);
+  bgSelectedMaterialIndex = Math.min(entry.snapshot.selectedMaterialIndex ?? bgSelectedMaterialIndex, bgMaterials.length - 1);
+  bgSelectedMaterialIndices = (entry.snapshot.selectedMaterialIndices || []).filter(index => index < bgMaterials.length);
   blueBgState.layers = entry.snapshot.layers.map(layer => ({ ...layer }));
   blueBgState.selectedId = entry.snapshot.selectedId;
+  blueBgState.selectedIds = (entry.snapshot.selectedIds || []).filter(id => blueBgState.layers.some(layer => layer.id === id));
   renderBgMaterialList();
   if ($("#bgBlueMode").checked) {
     updateBlueBgControls();
@@ -2063,7 +2404,7 @@ function renderBgPreviewList() {
   bgMaterials.forEach((material, index) => {
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `bg-preview-card${index === bgSelectedMaterialIndex ? " active" : ""}`;
+    card.className = `bg-preview-card${selectedDefaultBgMaterialIndexes().includes(index) ? " active" : ""}`;
     card.dataset.bgPreviewIndex = String(index);
     if (material.outputUrl) {
       const img = document.createElement("img");
@@ -2146,7 +2487,7 @@ async function renderDefaultBgMaterial(index, scheduledVersion = null) {
       scale,
       shadow,
       round,
-      controller.signal
+      controller.signal,
     );
     if (version !== material.renderVersion) return;
     const previousOutputUrl = material.outputUrl;
@@ -2170,120 +2511,6 @@ async function renderDefaultBgMaterial(index, scheduledVersion = null) {
       syncBgGeneratedResults();
     }
   }
-}
-
-let bgDecorAssetsPromise = null;
-
-function loadBgDecorAssets() {
-  if (!bgDecorAssetsPromise) {
-    bgDecorAssetsPromise = Promise.all([
-      loadImageSource(BG_HEADER_ASSET_URL),
-      loadImageSource(BG_FOOTER_ASSET_URL),
-    ]);
-  }
-  return bgDecorAssetsPromise;
-}
-
-function canvasToPngBlob(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => {
-      if (blob) resolve(blob);
-      else reject(new Error("浏览器无法生成 PNG，请换一张图片重试。"));
-    }, "image/png");
-  });
-}
-
-function detectClientBgMode(ctx, width, height) {
-  const pixels = ctx.getImageData(0, 0, width, height).data;
-  let transparent = 0;
-  let edgeOpaque = 0;
-  let edgeWhite = 0;
-  const step = Math.max(1, Math.round(Math.min(width, height) / 180));
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      const edge = x < step * 3 || y < step * 3 || x >= width - step * 3 || y >= height - step * 3;
-      const offset = (y * width + x) * 4;
-      const alpha = pixels[offset + 3];
-      if (alpha < 245) transparent += 1;
-      if (edge && alpha >= 245) {
-        edgeOpaque += 1;
-        if (pixels[offset] >= 242 && pixels[offset + 1] >= 242 && pixels[offset + 2] >= 242) {
-          edgeWhite += 1;
-        }
-      }
-    }
-  }
-  if (transparent > 4) return "transparent";
-  if (edgeOpaque && edgeWhite / edgeOpaque >= 0.4) return "white-edge";
-  return "manual";
-}
-
-async function renderBgInBrowser(file, scalePercent, withShadow, withRound, signal) {
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  const [{ image }, [header, footer]] = await Promise.all([
-    loadBlueBgFile(file),
-    loadBgDecorAssets(),
-  ]);
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
-  const sourceScale = Math.max(1, scalePercent / 100);
-  const sourceWidth = Math.max(1, Math.round(image.naturalWidth * sourceScale));
-  const sourceHeight = Math.max(1, Math.round(image.naturalHeight * sourceScale));
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = sourceWidth;
-  sourceCanvas.height = sourceHeight;
-  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  sourceCtx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-  const mode = detectClientBgMode(sourceCtx, sourceWidth, sourceHeight);
-  const appliedRound = withRound && mode !== "transparent";
-  const scaleRatio = Math.min(scalePercent, 100) / 100;
-  const aspect = sourceWidth / sourceHeight;
-  const compensation = Math.min(Math.abs(aspect - 1), 1) * 0.15;
-  let outputWidth = aspect < 1
-    ? Math.round(sourceWidth / scaleRatio)
-    : Math.round(sourceWidth / scaleRatio * (1 - compensation));
-  let outputHeight = aspect > 1
-    ? Math.round(sourceHeight / scaleRatio)
-    : Math.round(sourceHeight / scaleRatio * (1 - compensation));
-  const tightness = scalePercent > 100 ? Math.min((scalePercent - 100) / 50, 1) : 0;
-  const marginRatio = scalePercent > 100 ? Math.max(0.01, 0.035 * (1 - tightness)) : 0.035;
-  const minXMargin = scalePercent > 100 ? Math.max(8, Math.round(sourceWidth * marginRatio)) : Math.max(40, Math.round(sourceWidth * marginRatio));
-  const minYMargin = scalePercent > 100 ? Math.max(6, Math.round(sourceHeight * marginRatio)) : Math.max(32, Math.round(sourceHeight * marginRatio));
-  outputWidth = Math.max(outputWidth, sourceWidth + minXMargin * 2);
-  outputHeight = Math.max(outputHeight, sourceHeight + minYMargin * 2);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = outputWidth;
-  canvas.height = outputHeight;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#8cc6ff";
-  ctx.fillRect(0, 0, outputWidth, outputHeight);
-  const headerHeight = Math.round(header.naturalHeight * outputWidth / header.naturalWidth);
-  const footerHeight = Math.round(footer.naturalHeight * outputWidth / footer.naturalWidth);
-  ctx.drawImage(header, 0, 0, outputWidth, headerHeight);
-  ctx.drawImage(footer, 0, outputHeight - footerHeight, outputWidth, footerHeight);
-
-  const x = Math.round((outputWidth - sourceWidth) / 2);
-  const y = Math.round((outputHeight - sourceHeight) / 2);
-  const radius = appliedRound ? Math.max(8, Math.round(Math.min(sourceWidth, sourceHeight) * 0.02)) : 0;
-  if (withShadow) {
-    ctx.save();
-    ctx.shadowColor = "rgba(15, 23, 42, .28)";
-    ctx.shadowBlur = Math.max(18, Math.round(Math.min(sourceWidth, sourceHeight) * 0.035));
-    ctx.shadowOffsetY = Math.max(8, Math.round(Math.min(sourceWidth, sourceHeight) * 0.016));
-    ctx.fillStyle = "#fff";
-    blueBgRoundedRect(ctx, x, y, sourceWidth, sourceHeight, radius);
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.save();
-  blueBgRoundedRect(ctx, x, y, sourceWidth, sourceHeight, radius);
-  ctx.clip();
-  ctx.drawImage(sourceCanvas, x, y);
-  ctx.restore();
-  const blob = await canvasToPngBlob(canvas);
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  return { blob, mode, appliedShadow: withShadow, appliedRound };
 }
 
 function scheduleDefaultBgMaterialRender(index) {
@@ -2323,6 +2550,18 @@ function cloneCanvas(source) {
   clone.height = source.height;
   clone.getContext("2d").drawImage(source, 0, 0);
   return clone;
+}
+
+function canvasScaledToWidth(source, targetWidth = IMAGE_EXPORT_WIDTH) {
+  if (source.width === targetWidth) return source;
+  const output = document.createElement("canvas");
+  output.width = targetWidth;
+  output.height = Math.max(1, Math.round(source.height * targetWidth / source.width));
+  const ctx = output.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, output.width, output.height);
+  return output;
 }
 
 function pushImageEditorHistory() {
@@ -2513,15 +2752,12 @@ function syncImageEditorOverlays() {
     ["create", "adjust", "move-selection"].includes(imageEditorState.interaction?.mode)
   );
   if (selection) {
-    const start = imageEditorCanvasPointToStage({ x: selection.x, y: selection.y });
-    const end = imageEditorCanvasPointToStage({
-      x: selection.x + selection.width,
-      y: selection.y + selection.height,
-    });
-    selectionOverlay.style.left = `${start.x}px`;
-    selectionOverlay.style.top = `${start.y}px`;
-    selectionOverlay.style.width = `${Math.max(2, end.x - start.x)}px`;
-    selectionOverlay.style.height = `${Math.max(2, end.y - start.y)}px`;
+    syncCanvasSelectionOverlay(
+      $("#imageEditorStage"),
+      imageEditorCanvas(),
+      selectionOverlay,
+      selection
+    );
   }
   const gradient = imageEditorState.gradient;
   gradientOverlay.hidden = !gradient;
@@ -3109,11 +3345,12 @@ function restoreImageEditorHistory(index) {
 
 function exportImageEditorImage() {
   if (!imageEditorState.hasImage) return;
-  imageEditorState.documentCanvas.toBlob(blob => {
+  const exportCanvas = canvasScaledToWidth(imageEditorState.documentCanvas);
+  exportCanvas.toBlob(blob => {
     if (!blob) return;
     const baseName = imageEditorState.sourceName.replace(/\.[^.]+$/, "") || "image";
     downloadBlob(blob, `${baseName}-编辑.png`);
-    imageEditorStatus(`已导出 ${imageEditorState.documentCanvas.width} × ${imageEditorState.documentCanvas.height}px PNG`);
+    imageEditorStatus(`已导出 ${exportCanvas.width} × ${exportCanvas.height}px PNG`);
   }, "image/png");
 }
 
@@ -3287,6 +3524,7 @@ function restoreAnnotationHistory(index) {
   annotationState.historyIndex = index;
   annotationState.items = entry.snapshot.map(item => ({ ...item }));
   annotationState.selectedId = annotationState.items.at(-1)?.id ?? null;
+  annotationState.selectedIds = [];
   annotationState.nextId = Math.max(0, ...annotationState.items.map(item => item.id)) + 1;
   annotationState.nextNumber = Math.max(0, ...annotationState.items.filter(item => item.type === "number").map(item => item.number)) + 1;
   annotationState.editingNumberId = null;
@@ -3297,8 +3535,9 @@ function restoreAnnotationHistory(index) {
 
 function updateAnnotationControls() {
   const hasImage = Boolean(annotationState.image);
-  const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-  const hasSelection = Boolean(selected);
+  const selectedItems = selectedAnnotationItems();
+  const selected = selectedItems.length === 1 ? selectedItems[0] : null;
+  const hasSelection = selectedItems.length > 0;
   $("#annotationViewMode").disabled = !hasImage;
   $("#addAnnotationNumber").disabled = !hasImage;
   $("#addAnnotationMask").disabled = !hasImage;
@@ -3337,6 +3576,23 @@ function annotationItemBounds(item) {
     };
   }
   return { x: item.x, y: item.y, width: item.width, height: item.height };
+}
+
+function selectedAnnotationItems() {
+  const ids = annotationState.selectedIds.length
+    ? new Set(annotationState.selectedIds)
+    : new Set(annotationState.selectedId === null ? [] : [annotationState.selectedId]);
+  return annotationState.items.filter(item => ids.has(item.id));
+}
+
+function annotationSelectionBounds() {
+  return unionBounds(selectedAnnotationItems().map(annotationItemBounds));
+}
+
+function annotationSelectionEntries() {
+  return selectedAnnotationItems()
+    .map(item => ({ id: item.id, bounds: annotationItemBounds(item) }))
+    .sort((a, b) => Number(b.id === annotationState.selectedId) - Number(a.id === annotationState.selectedId));
 }
 
 function drawAnnotationItem(ctx, item) {
@@ -3379,7 +3635,9 @@ function drawAnnotationSelection(ctx, item) {
 
 function renderAnnotationCanvas(includeSelection = true) {
   if (!annotationState.image) {
-    $("#annotationSelectionOverlay").hidden = true;
+    syncCanvasSelectionOverlays(
+      $("#annotationStage"), annotationCanvas(), $("#annotationSelectionOverlay"), []
+    );
     return;
   }
   const canvas = annotationCanvas();
@@ -3389,15 +3647,19 @@ function renderAnnotationCanvas(includeSelection = true) {
   annotationState.items.forEach(item => drawAnnotationItem(ctx, item));
   drawCanvasSnapGuides(ctx, canvas, annotationState.snapGuides);
   if (includeSelection) {
-    const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-    syncCanvasSelectionOverlay(
+    syncCanvasSelectionOverlays(
       $("#annotationStage"),
       canvas,
       $("#annotationSelectionOverlay"),
-      selected ? annotationItemBounds(selected) : null
+      annotationSelectionEntries()
     );
   } else {
-    $("#annotationSelectionOverlay").hidden = true;
+    syncCanvasSelectionOverlays(
+      $("#annotationStage"),
+      canvas,
+      $("#annotationSelectionOverlay"),
+      []
+    );
   }
 }
 
@@ -3410,12 +3672,11 @@ function applyAnnotationZoom(zoom) {
   canvas.style.imageRendering = annotationState.zoom >= 4 ? "pixelated" : "auto";
   $("#annotationStage").classList.toggle("at-base-zoom", annotationState.zoom <= 1.001);
   requestAnimationFrame(() => {
-    const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-    syncCanvasSelectionOverlay(
+    syncCanvasSelectionOverlays(
       $("#annotationStage"),
       canvas,
       $("#annotationSelectionOverlay"),
-      selected ? annotationItemBounds(selected) : null
+      annotationSelectionEntries()
     );
   });
 }
@@ -3454,6 +3715,7 @@ function loadAnnotationImage(file) {
     annotationState.mode = "view";
     annotationState.items = [];
     annotationState.selectedId = null;
+    annotationState.selectedIds = [];
     annotationState.nextNumber = 1;
     annotationState.nextId = 1;
     annotationState.interaction = null;
@@ -3521,6 +3783,7 @@ function addAnnotationNumber() {
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
+  annotationState.selectedIds = [];
   finishAnnotationChange(`已添加序号 ${item.number}`);
 }
 
@@ -3535,6 +3798,7 @@ function addAnnotationNumberAt(point) {
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
+  annotationState.selectedIds = [];
   finishAnnotationChange(`已在点击位置添加序号 ${item.number}`);
 }
 
@@ -3554,6 +3818,7 @@ function addAnnotationMask() {
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
+  annotationState.selectedIds = [];
   finishAnnotationChange("已添加遮挡块");
 }
 
@@ -3574,6 +3839,7 @@ function addAnnotationBlur() {
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
+  annotationState.selectedIds = [];
   finishAnnotationChange("已添加高斯模糊");
 }
 
@@ -3595,16 +3861,13 @@ function finishAnnotationChange(message) {
 }
 
 function deleteSelectedAnnotation() {
-  const index = annotationState.items.findIndex(item => item.id === annotationState.selectedId);
-  if (index < 0) return;
-  const [deleted] = annotationState.items.splice(index, 1);
+  const selected = selectedAnnotationItems();
+  const ids = new Set(selected.map(item => item.id));
+  if (!ids.size) return;
+  annotationState.items = annotationState.items.filter(item => !ids.has(item.id));
   annotationState.selectedId = null;
-  const label = deleted.type === "number"
-    ? `序号 ${deleted.number}`
-    : deleted.type === "blur"
-      ? "高斯模糊"
-      : "遮挡块";
-  finishAnnotationChange(`已删除${label}`);
+  annotationState.selectedIds = [];
+  finishAnnotationChange(`已删除 ${ids.size} 个标注`);
 }
 
 function annotationPointerPosition(event) {
@@ -3678,6 +3941,7 @@ function annotationPointerDown(event) {
     };
     annotationState.items.push(item);
     annotationState.selectedId = item.id;
+    annotationState.selectedIds = [];
     annotationState.interaction = {
       mode: "create",
       id: item.id,
@@ -3691,21 +3955,57 @@ function annotationPointerDown(event) {
     event.preventDefault();
     return;
   }
-  const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-  const handle = hitAnnotationHandle(selected, point);
-  if (handle) {
+  const selectedItems = selectedAnnotationItems();
+  const multiKey = event.metaKey || event.ctrlKey;
+  if (multiKey) {
+    const item = existingAtPoint ||
+      [...annotationState.items].reverse().find(candidate => pointInAnnotationItem(candidate, point));
+    if (item) {
+      const ids = new Set(selectedItems.map(candidate => candidate.id));
+      const adding = !ids.has(item.id);
+      if (adding) ids.add(item.id);
+      else ids.delete(item.id);
+      annotationState.selectedIds = [...ids];
+      annotationState.selectedId = adding ? item.id : (annotationState.selectedIds.at(-1) ?? null);
+      const updatedSelection = selectedAnnotationItems();
+      annotationState.interaction = adding ? {
+        mode: updatedSelection.length > 1 ? "move-group" : "move",
+        id: item.id,
+        start: point,
+        original: { ...item },
+        originals: updatedSelection.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y })),
+      } : null;
+    } else {
+      annotationState.interaction = null;
+    }
+    canvas.setPointerCapture?.(event.pointerId);
+    $("#annotationStage").focus();
+    updateAnnotationControls();
+    renderAnnotationCanvas();
+    event.preventDefault();
+    return;
+  }
+  const handleTarget = [...selectedItems]
+    .reverse()
+    .map(candidate => ({ item: candidate, handle: hitAnnotationHandle(candidate, point) }))
+    .find(candidate => candidate.handle);
+  if (handleTarget) {
     annotationState.interaction = {
       mode: "resize",
-      id: selected.id,
-      handle,
+      id: handleTarget.item.id,
+      handle: handleTarget.handle,
       start: point,
-      original: { ...selected },
+      original: { ...handleTarget.item },
     };
   } else {
     const item = existingAtPoint ||
       [...annotationState.items].reverse().find(candidate => pointInAnnotationItem(candidate, point));
-    annotationState.selectedId = item?.id ?? null;
-    if (item) {
+    const movingSelection = item && selectedItems.some(candidate => candidate.id === item.id);
+    if (!movingSelection) {
+      annotationState.selectedId = item?.id ?? null;
+      annotationState.selectedIds = [];
+    }
+    if (item && !movingSelection) {
       const itemIndex = annotationState.items.findIndex(candidate => candidate.id === item.id);
       if (itemIndex >= 0 && itemIndex < annotationState.items.length - 1) {
         annotationState.items.splice(itemIndex, 1);
@@ -3713,10 +4013,13 @@ function annotationPointerDown(event) {
       }
     }
     annotationState.interaction = item ? {
-      mode: "move",
+      mode: movingSelection && selectedItems.length > 1 ? "move-group" : "move",
       id: item.id,
       start: point,
       original: { ...item },
+      originals: movingSelection
+        ? selectedItems.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y }))
+        : null,
     } : null;
   }
   canvas.setPointerCapture?.(event.pointerId);
@@ -3780,10 +4083,13 @@ function annotationPointerMove(event) {
       return;
     }
     const point = annotationPointerPosition(event);
-    const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-    const handle = hitAnnotationHandle(selected, point);
+    const selectedItems = selectedAnnotationItems();
+    const handle = [...selectedItems]
+      .reverse()
+      .map(item => hitAnnotationHandle(item, point))
+      .find(Boolean);
     annotationCanvas().style.cursor = selectionCursorByHandle[handle] ||
-      (selected && pointInAnnotationItem(selected, point) ? "move" : "default");
+      (selectedItems.some(item => pointInAnnotationItem(item, point)) ? "move" : "default");
     return;
   }
   const item = annotationState.items.find(candidate => candidate.id === interaction.id);
@@ -3812,6 +4118,26 @@ function annotationPointerMove(event) {
     };
     const selection = selectionFromPoints(interaction.start, point, event.shiftKey);
     Object.assign(item, selection);
+  } else if (interaction.mode === "move-group") {
+    const dx = point.x - interaction.start.x;
+    const dy = point.y - interaction.start.y;
+    interaction.originals.forEach(original => {
+      const candidate = annotationState.items.find(item => item.id === original.id);
+      if (!candidate) return;
+      candidate.x = original.x + dx;
+      candidate.y = original.y + dy;
+    });
+    const canvas = annotationCanvas();
+    const bounds = annotationSelectionBounds();
+    const snapped = snapBoundsToCanvas(bounds, canvas, 10, true);
+    const offsetX = snapped.x - bounds.x;
+    const offsetY = snapped.y - bounds.y;
+    selectedAnnotationItems().forEach(candidate => {
+      candidate.x += offsetX;
+      candidate.y += offsetY;
+      clampAnnotationItem(candidate);
+    });
+    annotationState.snapGuides = snapped.guides;
   } else if (interaction.mode === "move") {
     moveAnnotationItem(item, interaction, point);
   } else {
@@ -3833,6 +4159,7 @@ function annotationPointerUp(event) {
     if (!item || item.width < 2 || item.height < 2) {
       annotationState.items = annotationState.items.filter(candidate => candidate.id !== interaction.id);
       annotationState.selectedId = null;
+      annotationState.selectedIds = [];
       renderAnnotationCanvas();
       updateAnnotationControls();
       annotationStatusText("框选范围太小，未创建标注；当前创建模式保持不变。");
@@ -3891,6 +4218,7 @@ function annotationDoubleClick(event) {
   if (!item) return;
   event.preventDefault();
   annotationState.selectedId = item.id;
+  annotationState.selectedIds = [];
   annotationState.editingNumberId = item.id;
   $("#annotationNumberInput").value = String(item.number);
   updateAnnotationControls();
@@ -3931,7 +4259,7 @@ function annotationKeyDown(event) {
     setAnnotationMode("view");
     return;
   }
-  if ((event.key === "Delete" || event.key === "Backspace") && annotationState.selectedId !== null) {
+  if ((event.key === "Delete" || event.key === "Backspace") && selectedAnnotationItems().length) {
     event.preventDefault();
     deleteSelectedAnnotation();
     return;
@@ -3944,13 +4272,15 @@ function annotationKeyDown(event) {
   };
   const direction = directions[event.key];
   if (!direction) return;
-  const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-  if (!selected) return;
+  const selected = selectedAnnotationItems();
+  if (!selected.length) return;
   event.preventDefault();
   const step = event.shiftKey ? 10 : 1;
-  selected.x += direction[0] * step;
-  selected.y += direction[1] * step;
-  clampAnnotationItem(selected);
+  selected.forEach(item => {
+    item.x += direction[0] * step;
+    item.y += direction[1] * step;
+    clampAnnotationItem(item);
+  });
   pushAnnotationHistory();
   renderAnnotationCanvas();
   annotationStatusText(`已微调 ${step}px · 共 ${annotationState.items.length} 个标注`);
@@ -3965,14 +4295,15 @@ function exportAnnotationImage() {
   const ctx = exportCanvas.getContext("2d");
   ctx.drawImage(annotationState.image, 0, 0);
   annotationState.items.forEach(item => drawAnnotationItem(ctx, item));
-  exportCanvas.toBlob(blob => {
+  const normalizedCanvas = canvasScaledToWidth(exportCanvas);
+  normalizedCanvas.toBlob(blob => {
     if (!blob) {
       annotationStatusText("导出失败，请重试。");
       return;
     }
     const baseName = annotationState.sourceName.replace(/\.[^.]+$/, "") || "图片";
     downloadBlob(blob, `${baseName}-标注.png`);
-    annotationStatusText(`已导出 ${baseName}-标注.png`);
+    annotationStatusText(`已导出 ${normalizedCanvas.width} × ${normalizedCanvas.height}px · ${baseName}-标注.png`);
   }, "image/png");
 }
 
@@ -4989,6 +5320,7 @@ function enterActiveImageModuleView() {
   } else if (moduleId === "bg") {
     blueBgState.interaction = null;
     blueBgState.selectedId = null;
+    blueBgState.selectedIds = [];
     blueBgState.snapGuides = emptySnapGuides();
     renderBlueBgCanvas();
     updateBlueBgControls();
@@ -5036,6 +5368,37 @@ function stepActiveImageModuleZoom(direction) {
 
 function selectAllInActiveImageTool() {
   const moduleId = activeImageModuleId();
+  if (moduleId === "bg" && $("#bgBlueMode").checked && blueBgState.layers.length) {
+    blueBgState.selectedIds = blueBgState.layers.map(layer => layer.id);
+    blueBgState.selectedId = blueBgState.selectedIds.at(-1) ?? null;
+    updateBlueBgControls();
+    renderBlueBgCanvas();
+    $("#blueBgStage").focus();
+    blueBgStatus(`已全选 ${blueBgState.selectedIds.length} 层前景图。`);
+    return true;
+  }
+  if (moduleId === "bg" && !$("#bgBlueMode").checked && bgMaterials.length) {
+    bgSelectedMaterialIndices = bgMaterials.map((_, index) => index);
+    bgSelectedMaterialIndex = bgSelectedMaterialIndices[0];
+    renderBgMaterialList();
+    renderBgPreviewList();
+    syncBgEffectToolbar();
+    updateBgExportState();
+    $("#bgPreview").focus?.();
+    return true;
+  }
+  if (moduleId === "annotation" && annotationState.image && annotationState.items.length) {
+    annotationState.selectedIds = annotationState.items.map(item => item.id);
+    annotationState.selectedId = annotationState.selectedIds.at(-1) ?? null;
+    annotationState.mode = "view";
+    annotationState.interaction = null;
+    annotationState.snapGuides = emptySnapGuides();
+    updateAnnotationControls();
+    renderAnnotationCanvas();
+    $("#annotationStage").focus();
+    annotationStatusText(`已全选 ${annotationState.selectedIds.length} 个标注。`);
+    return true;
+  }
   if (
     moduleId === "imageEditor" &&
     imageEditorState.hasImage &&
@@ -5071,6 +5434,7 @@ function selectAllInActiveImageTool() {
     };
     annotationState.items.push(item);
     annotationState.selectedId = item.id;
+    annotationState.selectedIds = [];
     finishAnnotationChange(
       annotationState.mode === "blur" ? "已全选图像并创建高斯模糊" : "已全选图像并创建遮挡块"
     );
@@ -5209,28 +5573,28 @@ function bind() {
     event.target.value = "";
   };
   $("#bgMaterialList").onclick = event => {
-    const deleteMaterial = event.target.closest("[data-delete-bg-material]");
     const blueLayer = event.target.closest("[data-blue-layer-id]");
     const material = event.target.closest("[data-bg-material-index]");
-    if (deleteMaterial) {
-      event.stopPropagation();
-      deleteDefaultBgMaterial(Number(deleteMaterial.dataset.deleteBgMaterial));
-    } else if (blueLayer) {
+    if (blueLayer) {
       blueBgState.selectedId = Number(blueLayer.dataset.blueLayerId);
+      blueBgState.selectedIds = [];
       updateBlueBgControls();
       renderBlueBgCanvas();
     } else if (material) {
       const index = Number(material.dataset.bgMaterialIndex);
-      openBgMaterialInspector(index);
+      if (event.metaKey || event.ctrlKey) toggleDefaultBgMaterialSelection(index);
+      else openBgMaterialInspector(index);
       scrollToDefaultBgPreview(index);
-    } else if (event.target.closest(".bg-material-empty")) {
+    } else if (event.target.closest("[data-import-bg-material]")) {
       $("#bgFiles").click();
     }
   };
   $("#bgPreview").onclick = event => {
     const preview = event.target.closest("[data-bg-preview-index]");
     if (preview) {
-      openBgMaterialInspector(Number(preview.dataset.bgPreviewIndex));
+      const index = Number(preview.dataset.bgPreviewIndex);
+      if (event.metaKey || event.ctrlKey) toggleDefaultBgMaterialSelection(index);
+      else openBgMaterialInspector(index);
       preview.focus();
     }
   };
@@ -5238,7 +5602,7 @@ function bind() {
     if ((event.key === "Delete" || event.key === "Backspace") &&
         event.target.closest("[data-bg-preview-index]")) {
       event.preventDefault();
-      deleteDefaultBgMaterial(bgSelectedMaterialIndex);
+      deleteSelectedDefaultBgMaterials();
     }
   };
   $("#bgDeleteSelected").onclick = deleteSelectedBgItem;
@@ -5257,7 +5621,7 @@ function bind() {
     else saveBgMaterialInspector();
     pushBgHistory();
   };
-  $("#sendBlueBgToAnnotation").onclick = sendBlueBgToAnnotation;
+  $("#sendBlueBgToAnnotation").onclick = sendBgToAnnotation;
   $("#blueBgCanvas").onpointerdown = blueBgPointerDown;
   $("#blueBgCanvas").onpointermove = blueBgPointerMove;
   $("#blueBgCanvas").onpointerup = blueBgPointerUp;
