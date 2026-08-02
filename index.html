@@ -3,34 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="在浏览器本地完成图片加底、图片标注和图片编辑，图片无需上传服务器。">
-  <meta name="theme-color" content="#1677ff">
-  <title>荔枝图片工具箱</title>
+  <meta name="description" content="荔图（Li Tu）是一款在浏览器本地运行的图片加底、图片标注与图片编辑工具。">
+  <meta name="theme-color" content="#ffffff">
+  <title>荔图 · Li Tu</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=20260802-litu1">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
-    <a class="tabs-brand" href="./" aria-label="荔枝图片工具箱首页">
-      <img src="./assets/toolbox-icon.png" alt="">
-      <span>荔枝图片工具箱</span>
-    </a>
+    <strong class="online-tool-name">荔图 <span>Li Tu</span></strong>
     <div class="tab-buttons">
       <button data-tab="bg" class="active">图片加底</button>
       <button data-tab="annotation">图片标注</button>
       <button data-tab="imageEditor">图片编辑</button>
     </div>
-    <span class="privacy-note">图片仅在本机处理</span>
-    <button id="shutdownToolbox" class="shutdown-button legacy-only" type="button" hidden>关闭</button>
+    <button id="shutdownToolbox" class="shutdown-button" type="button" hidden>关闭</button>
   </nav>
-
-  <header class="site-intro">
-    <div>
-      <h1>一个页面，完成三种图片处理</h1>
-      <p>加底、标注、裁切与合成全部在浏览器内完成，导入后即可编辑并导出 PNG。</p>
-    </div>
-    <span>无需上传 · 免费使用</span>
-  </header>
 
   <main>
     <section id="packager" class="panel">
@@ -204,12 +192,12 @@
         <div class="bg-workbench">
           <aside class="bg-material-pane">
             <div id="bgMaterialList" class="bg-material-list">
-              <button class="bg-material-empty canvas-empty-import" type="button">导入图片</button>
+              <div class="bg-material-import-card"><button class="bg-material-import-button canvas-empty-import" type="button" data-import-bg-material>导入图片</button></div>
             </div>
           </aside>
           <div class="bg-output">
             <div id="bgEffectToolbar" class="bg-effect-toolbar is-disabled">
-              <button id="bgDeleteSelected" class="annotation-delete" type="button" disabled>删除所选</button>
+              <button id="bgModeToggleButton" class="bg-mode-toggle active" type="button" aria-label="切换到蓝底模式" title="切换到蓝底模式"><span class="tool-symbol tool-symbol-layers"></span><span id="bgModeToggleLabel">蓝底模式</span></button>
               <label class="inline-check"><input id="bgEffectShadow" type="checkbox" disabled> 添加阴影</label>
               <label class="inline-check"><input id="bgEffectRound" type="checkbox" disabled> 添加圆角</label>
               <label class="bg-effect-size">
@@ -241,12 +229,12 @@
             </div>
           </div>
           <div class="bg-mode-toolbar" role="toolbar" aria-label="图片加底功能">
-            <button id="bgModeToggleButton" type="button" aria-label="切换到蓝底模式" title="切换到蓝底模式"><span class="tool-symbol tool-symbol-layers"></span><small id="bgModeToggleLabel">默认</small></button>
             <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
             <button id="bgExportButton" type="button" aria-label="导出" title="导出" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="sendBlueBgToAnnotation" type="button" aria-label="标注" title="生成并导入图片标注" disabled><span class="tool-symbol tool-symbol-annotate"></span><small>标注</small></button>
+            <button id="bgDeleteSelected" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
             <button id="bgUndo" type="button" aria-label="撤销" title="撤销" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
             <button id="bgRedo" type="button" aria-label="重做" title="重做" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
-            <button id="sendBlueBgToAnnotation" type="button" aria-label="标注" title="生成并导入图片标注" hidden><span class="tool-symbol tool-symbol-annotate"></span><small>标注</small></button>
           </div>
         </div>
       </div>
@@ -485,8 +473,8 @@
     </section>
   </main>
 
-  <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔枝图片工具箱 V1.0.0</div>
+  <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=20260802-litu1"></script>
 </body>
 </html>
