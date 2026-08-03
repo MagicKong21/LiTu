@@ -36,6 +36,8 @@ const DOWNLOAD_DIR_KEY = "lizhi.downloadDir.v1";
 const MAX_DISTRIBUTION_VERSIONS = 4;
 const ANNOTATION_NUMBER_SIZE = 110;
 const ANNOTATION_HANDLE_SIZE = 18;
+const ANNOTATION_MAGNIFIER_COLOR = "#ff594b";
+const ANNOTATION_MAGNIFIER_LINE_WIDTH = 8;
 const IMAGE_EXPORT_WIDTH = 2000;
 const SYSTEM_CORNER_RADIUS = 32;
 const CONTINUOUS_CORNER_EXPONENT = 4;
@@ -1958,7 +1960,7 @@ function updateBlueBgLayerScale() {
   });
   updateBlueBgControls();
   renderBlueBgCanvas();
-  blueBgStatus(`所选图片大小 ${Math.round(scale * 100)}% · 中心位置保持不变`);
+  blueBgStatus(`所选图片缩放比例 ${Math.round(scale * 100)}% · 中心位置保持不变`);
 }
 
 function deleteBlueBgLayer() {
@@ -3542,6 +3544,7 @@ function updateAnnotationControls() {
   $("#addAnnotationNumber").disabled = !hasImage;
   $("#addAnnotationMask").disabled = !hasImage;
   $("#addAnnotationBlur").disabled = !hasImage;
+  $("#addAnnotationMagnifier").disabled = !hasImage;
   $("#exportAnnotation").disabled = !hasImage;
   $("#deleteAnnotation").disabled = !hasSelection;
   $("#annotationUndo").disabled = annotationState.historyIndex <= 0;
@@ -3551,6 +3554,7 @@ function updateAnnotationControls() {
   $("#addAnnotationNumber").classList.toggle("active", annotationState.mode === "number");
   $("#addAnnotationMask").classList.toggle("active", annotationState.mode === "mask");
   $("#addAnnotationBlur").classList.toggle("active", annotationState.mode === "blur");
+  $("#addAnnotationMagnifier").classList.toggle("active", annotationState.mode === "magnifier");
   $("#annotationStage").dataset.mode = annotationState.mode;
   const blurControls = $("#annotationBlurControls");
   const showBlurControls = selected?.type === "blur";
@@ -3558,6 +3562,14 @@ function updateAnnotationControls() {
   if (showBlurControls) {
     $("#annotationBlurStrength").value = String(selected.strength);
     $("#annotationBlurStrengthValue").textContent = `${selected.strength}px`;
+  }
+  const magnifierControls = $("#annotationMagnifierControls");
+  const showMagnifierControls = selected?.type === "magnifier";
+  magnifierControls.hidden = !showMagnifierControls;
+  if (showMagnifierControls) {
+    $("#annotationMagnifierColor").value = selected.color;
+    $("#annotationMagnifierWidth").value = String(selected.lineWidth);
+    $("#annotationMagnifierWidthValue").textContent = `${selected.lineWidth}px`;
   }
   $("#annotationNumberEditor").hidden = annotationState.editingNumberId === null;
 }
@@ -3574,6 +3586,13 @@ function annotationItemBounds(item) {
       width: ANNOTATION_NUMBER_SIZE,
       height: ANNOTATION_NUMBER_SIZE,
     };
+  }
+  if (item.type === "magnifier") {
+    const left = Math.min(item.sourceX - item.sourceRadius, item.lensX - item.lensRadius);
+    const top = Math.min(item.sourceY - item.sourceRadius, item.lensY - item.lensRadius);
+    const right = Math.max(item.sourceX + item.sourceRadius, item.lensX + item.lensRadius);
+    const bottom = Math.max(item.sourceY + item.sourceRadius, item.lensY + item.lensRadius);
+    return { x: left, y: top, width: right - left, height: bottom - top };
   }
   return { x: item.x, y: item.y, width: item.width, height: item.height };
 }
@@ -3609,6 +3628,61 @@ function drawAnnotationItem(ctx, item) {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(item.number), item.x, item.y + 2);
+    ctx.restore();
+    return;
+  }
+  if (item.type === "magnifier") {
+    if (item.sourceRadius < 1 || item.lensRadius < 1) return;
+    const dx = item.lensX - item.sourceX;
+    const dy = item.lensY - item.sourceY;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    const unitX = dx / distance;
+    const unitY = dy / distance;
+    ctx.save();
+    ctx.strokeStyle = item.color;
+    ctx.lineWidth = item.lineWidth;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(
+      item.sourceX + unitX * item.sourceRadius,
+      item.sourceY + unitY * item.sourceRadius
+    );
+    ctx.lineTo(
+      item.lensX - unitX * item.lensRadius,
+      item.lensY - unitY * item.lensRadius
+    );
+    ctx.stroke();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(item.lensX, item.lensY, item.lensRadius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(
+      item.lensX - item.lensRadius,
+      item.lensY - item.lensRadius,
+      item.lensRadius * 2,
+      item.lensRadius * 2
+    );
+    ctx.drawImage(
+      annotationState.image,
+      item.sourceX - item.sourceRadius,
+      item.sourceY - item.sourceRadius,
+      item.sourceRadius * 2,
+      item.sourceRadius * 2,
+      item.lensX - item.lensRadius,
+      item.lensY - item.lensRadius,
+      item.lensRadius * 2,
+      item.lensRadius * 2
+    );
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(item.sourceX, item.sourceY, item.sourceRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(item.lensX, item.lensY, item.lensRadius, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
     return;
   }
@@ -3740,7 +3814,7 @@ function setAnnotationMode(mode) {
   annotationState.mode = mode;
   annotationState.interaction = null;
   annotationState.snapGuides = emptySnapGuides();
-  annotationCanvas().style.cursor = ["number", "mask", "blur"].includes(mode) ? "crosshair" : "default";
+  annotationCanvas().style.cursor = ["number", "mask", "blur", "magnifier"].includes(mode) ? "crosshair" : "default";
   updateAnnotationControls();
   renderAnnotationCanvas();
   const messages = {
@@ -3748,6 +3822,7 @@ function setAnnotationMode(mode) {
     number: "序号模式：在图像中点击即可放置序号。",
     mask: "遮挡模式：在图像中拖动框选遮挡区域。",
     blur: "模糊模式：在图像中拖动框选高斯模糊区域。",
+    magnifier: "放大镜模式：拖动划定小圆范围，松开后会在右下角创建实时放大圆。",
   };
   annotationStatusText(messages[mode]);
   $("#annotationStage").focus();
@@ -3759,6 +3834,18 @@ function clampAnnotationItem(item) {
     const radius = ANNOTATION_NUMBER_SIZE / 2;
     item.x = Math.max(radius, Math.min(canvas.width - radius, item.x));
     item.y = Math.max(radius, Math.min(canvas.height - radius, item.y));
+    return;
+  }
+  if (item.type === "magnifier") {
+    const minimumRadius = Math.min(20, canvas.width / 4, canvas.height / 4);
+    const clampCircle = (xKey, yKey, radiusKey) => {
+      const maximumRadius = Math.max(minimumRadius, Math.min(canvas.width / 2, canvas.height / 2));
+      item[radiusKey] = Math.max(minimumRadius, Math.min(maximumRadius, item[radiusKey]));
+      item[xKey] = Math.max(item[radiusKey], Math.min(canvas.width - item[radiusKey], item[xKey]));
+      item[yKey] = Math.max(item[radiusKey], Math.min(canvas.height - item[radiusKey], item[yKey]));
+    };
+    clampCircle("sourceX", "sourceY", "sourceRadius");
+    clampCircle("lensX", "lensY", "lensRadius");
     return;
   }
   item.width = Math.max(40, Math.min(canvas.width, item.width));
@@ -3843,6 +3930,16 @@ function addAnnotationBlur() {
   finishAnnotationChange("已添加高斯模糊");
 }
 
+function updateAnnotationMagnifierStyle() {
+  const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
+  if (selected?.type !== "magnifier") return;
+  selected.color = $("#annotationMagnifierColor").value;
+  selected.lineWidth = Number($("#annotationMagnifierWidth").value);
+  $("#annotationMagnifierWidthValue").textContent = `${selected.lineWidth}px`;
+  renderAnnotationCanvas();
+  annotationStatusText(`放大镜线条 ${selected.lineWidth}px · 共 ${annotationState.items.length} 个标注`);
+}
+
 function updateAnnotationBlurStrength() {
   const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
   if (selected?.type !== "blur") return;
@@ -3893,6 +3990,16 @@ function annotationResizeHandles(item) {
 }
 
 function hitAnnotationHandle(item, point) {
+  if (item?.type === "magnifier") {
+    const canvas = annotationCanvas();
+    const rect = canvas.getBoundingClientRect();
+    const tolerance = 12 * canvas.width / Math.max(1, rect.width);
+    const lensDistance = Math.abs(Math.hypot(point.x - item.lensX, point.y - item.lensY) - item.lensRadius);
+    if (lensDistance <= tolerance) return "magnifier-lens";
+    const sourceDistance = Math.abs(Math.hypot(point.x - item.sourceX, point.y - item.sourceY) - item.sourceRadius);
+    if (sourceDistance <= tolerance) return "magnifier-source";
+    return null;
+  }
   if (item?.type !== "mask" && item?.type !== "blur") return null;
   return hitSelectionHandle(
     { x: item.x, y: item.y, width: item.width, height: item.height },
@@ -3906,8 +4013,17 @@ function pointInAnnotationItem(item, point) {
   if (item.type === "number") {
     return Math.hypot(point.x - item.x, point.y - item.y) <= ANNOTATION_NUMBER_SIZE / 2;
   }
+  if (item.type === "magnifier") {
+    return Boolean(magnifierPartAtPoint(item, point));
+  }
   return point.x >= item.x && point.x <= item.x + item.width &&
     point.y >= item.y && point.y <= item.y + item.height;
+}
+
+function magnifierPartAtPoint(item, point) {
+  if (Math.hypot(point.x - item.lensX, point.y - item.lensY) <= item.lensRadius) return "lens";
+  if (Math.hypot(point.x - item.sourceX, point.y - item.sourceY) <= item.sourceRadius) return "source";
+  return null;
 }
 
 function annotationPointerDown(event) {
@@ -3919,7 +4035,7 @@ function annotationPointerDown(event) {
   const existingAtPoint = [...annotationState.items]
     .reverse()
     .find(candidate => pointInAnnotationItem(candidate, point));
-  if (["number", "mask", "blur"].includes(annotationState.mode) && existingAtPoint) {
+  if (["number", "mask", "blur", "magnifier"].includes(annotationState.mode) && existingAtPoint) {
     annotationState.mode = "view";
     annotationStatusText("已点中现有标注，并自动切换到查看模式。");
   }
@@ -3955,6 +4071,35 @@ function annotationPointerDown(event) {
     event.preventDefault();
     return;
   }
+  if (annotationState.mode === "magnifier") {
+    const item = {
+      id: annotationState.nextId++,
+      type: "magnifier",
+      sourceX: point.x,
+      sourceY: point.y,
+      sourceRadius: 0,
+      lensX: point.x,
+      lensY: point.y,
+      lensRadius: 0,
+      color: ANNOTATION_MAGNIFIER_COLOR,
+      lineWidth: ANNOTATION_MAGNIFIER_LINE_WIDTH,
+    };
+    annotationState.items.push(item);
+    annotationState.selectedId = item.id;
+    annotationState.selectedIds = [];
+    annotationState.interaction = {
+      mode: "create-magnifier",
+      id: item.id,
+      start: point,
+      original: { ...item },
+    };
+    canvas.setPointerCapture?.(event.pointerId);
+    $("#annotationStage").focus();
+    updateAnnotationControls();
+    renderAnnotationCanvas();
+    event.preventDefault();
+    return;
+  }
   const selectedItems = selectedAnnotationItems();
   const multiKey = event.metaKey || event.ctrlKey;
   if (multiKey) {
@@ -3973,7 +4118,7 @@ function annotationPointerDown(event) {
         id: item.id,
         start: point,
         original: { ...item },
-        originals: updatedSelection.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y })),
+        originals: updatedSelection.map(candidate => ({ ...candidate })),
       } : null;
     } else {
       annotationState.interaction = null;
@@ -3991,7 +4136,7 @@ function annotationPointerDown(event) {
     .find(candidate => candidate.handle);
   if (handleTarget) {
     annotationState.interaction = {
-      mode: "resize",
+      mode: handleTarget.item.type === "magnifier" ? "resize-magnifier" : "resize",
       id: handleTarget.item.id,
       handle: handleTarget.handle,
       start: point,
@@ -4015,10 +4160,11 @@ function annotationPointerDown(event) {
     annotationState.interaction = item ? {
       mode: movingSelection && selectedItems.length > 1 ? "move-group" : "move",
       id: item.id,
+      part: item.type === "magnifier" ? magnifierPartAtPoint(item, point) : null,
       start: point,
       original: { ...item },
       originals: movingSelection
-        ? selectedItems.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y }))
+        ? selectedItems.map(candidate => ({ ...candidate }))
         : null,
     } : null;
   }
@@ -4032,6 +4178,16 @@ function annotationPointerDown(event) {
 function moveAnnotationItem(item, interaction, point) {
   const dx = point.x - interaction.start.x;
   const dy = point.y - interaction.start.y;
+  if (item.type === "magnifier") {
+    const part = interaction.part || "lens";
+    const xKey = part === "source" ? "sourceX" : "lensX";
+    const yKey = part === "source" ? "sourceY" : "lensY";
+    item[xKey] = interaction.original[xKey] + dx;
+    item[yKey] = interaction.original[yKey] + dy;
+    clampAnnotationItem(item);
+    annotationState.snapGuides = emptySnapGuides();
+    return;
+  }
   item.x = interaction.original.x + dx;
   item.y = interaction.original.y + dy;
   clampAnnotationItem(item);
@@ -4043,6 +4199,42 @@ function moveAnnotationItem(item, interaction, point) {
   item.x += offsetX;
   item.y += offsetY;
   annotationState.snapGuides = snapped.guides;
+}
+
+function translateAnnotationItem(item, original, dx, dy) {
+  if (item.type === "magnifier") {
+    item.sourceX = original.sourceX + dx;
+    item.sourceY = original.sourceY + dy;
+    item.lensX = original.lensX + dx;
+    item.lensY = original.lensY + dy;
+  } else {
+    item.x = original.x + dx;
+    item.y = original.y + dy;
+  }
+}
+
+function resizeAnnotationMagnifier(item, interaction, point) {
+  const source = interaction.handle === "magnifier-source";
+  const xKey = source ? "sourceX" : "lensX";
+  const yKey = source ? "sourceY" : "lensY";
+  const radiusKey = source ? "sourceRadius" : "lensRadius";
+  const canvas = annotationCanvas();
+  const minimumRadius = Math.min(20, canvas.width / 4, canvas.height / 4);
+  const maximumRadius = Math.max(
+    minimumRadius,
+    Math.min(
+      interaction.original[xKey],
+      canvas.width - interaction.original[xKey],
+      interaction.original[yKey],
+      canvas.height - interaction.original[yKey]
+    )
+  );
+  item[radiusKey] = Math.max(
+    minimumRadius,
+    Math.min(maximumRadius, Math.hypot(point.x - interaction.original[xKey], point.y - interaction.original[yKey]))
+  );
+  clampAnnotationItem(item);
+  annotationState.snapGuides = emptySnapGuides();
 }
 
 function resizeAnnotationMask(item, interaction, point, event) {
@@ -4078,7 +4270,7 @@ function annotationPointerMove(event) {
   const interaction = annotationState.interaction;
   if (!interaction) {
     if (!annotationState.image) return;
-    if (["number", "mask", "blur"].includes(annotationState.mode)) {
+    if (["number", "mask", "blur", "magnifier"].includes(annotationState.mode)) {
       annotationCanvas().style.cursor = "crosshair";
       return;
     }
@@ -4088,7 +4280,7 @@ function annotationPointerMove(event) {
       .reverse()
       .map(item => hitAnnotationHandle(item, point))
       .find(Boolean);
-    annotationCanvas().style.cursor = selectionCursorByHandle[handle] ||
+    annotationCanvas().style.cursor = (handle?.startsWith("magnifier-") ? "nwse-resize" : selectionCursorByHandle[handle]) ||
       (selectedItems.some(item => pointInAnnotationItem(item, point)) ? "move" : "default");
     return;
   }
@@ -4118,14 +4310,26 @@ function annotationPointerMove(event) {
     };
     const selection = selectionFromPoints(interaction.start, point, event.shiftKey);
     Object.assign(item, selection);
+  } else if (interaction.mode === "create-magnifier") {
+    const canvas = annotationCanvas();
+    const sourceRadius = Math.hypot(point.x - interaction.start.x, point.y - interaction.start.y);
+    item.sourceX = interaction.start.x;
+    item.sourceY = interaction.start.y;
+    item.sourceRadius = sourceRadius;
+    item.lensRadius = Math.max(80, sourceRadius * 2);
+    const gap = Math.max(28, item.lineWidth * 3);
+    const diagonal = (sourceRadius + item.lensRadius + gap) / Math.sqrt(2);
+    item.lensX = item.sourceX + diagonal;
+    item.lensY = item.sourceY + diagonal;
+    clampAnnotationItem(item);
+    annotationState.snapGuides = emptySnapGuides();
   } else if (interaction.mode === "move-group") {
     const dx = point.x - interaction.start.x;
     const dy = point.y - interaction.start.y;
     interaction.originals.forEach(original => {
       const candidate = annotationState.items.find(item => item.id === original.id);
       if (!candidate) return;
-      candidate.x = original.x + dx;
-      candidate.y = original.y + dy;
+      translateAnnotationItem(candidate, original, dx, dy);
     });
     const canvas = annotationCanvas();
     const bounds = annotationSelectionBounds();
@@ -4133,13 +4337,15 @@ function annotationPointerMove(event) {
     const offsetX = snapped.x - bounds.x;
     const offsetY = snapped.y - bounds.y;
     selectedAnnotationItems().forEach(candidate => {
-      candidate.x += offsetX;
-      candidate.y += offsetY;
+      const translated = { ...candidate };
+      translateAnnotationItem(candidate, translated, offsetX, offsetY);
       clampAnnotationItem(candidate);
     });
     annotationState.snapGuides = snapped.guides;
   } else if (interaction.mode === "move") {
     moveAnnotationItem(item, interaction, point);
+  } else if (interaction.mode === "resize-magnifier") {
+    resizeAnnotationMagnifier(item, interaction, point);
   } else {
     resizeAnnotationMask(item, interaction, point, event);
   }
@@ -4163,6 +4369,18 @@ function annotationPointerUp(event) {
       renderAnnotationCanvas();
       updateAnnotationControls();
       annotationStatusText("框选范围太小，未创建标注；当前创建模式保持不变。");
+      return;
+    }
+    clampAnnotationItem(item);
+  } else if (interaction.mode === "create-magnifier") {
+    const item = annotationState.items.find(candidate => candidate.id === interaction.id);
+    if (!item || item.sourceRadius < 8) {
+      annotationState.items = annotationState.items.filter(candidate => candidate.id !== interaction.id);
+      annotationState.selectedId = null;
+      annotationState.selectedIds = [];
+      renderAnnotationCanvas();
+      updateAnnotationControls();
+      annotationStatusText("放大范围太小，未创建放大镜；当前创建模式保持不变。");
       return;
     }
     clampAnnotationItem(item);
@@ -4277,8 +4495,8 @@ function annotationKeyDown(event) {
   event.preventDefault();
   const step = event.shiftKey ? 10 : 1;
   selected.forEach(item => {
-    item.x += direction[0] * step;
-    item.y += direction[1] * step;
+    const original = { ...item };
+    translateAnnotationItem(item, original, direction[0] * step, direction[1] * step);
     clampAnnotationItem(item);
   });
   pushAnnotationHistory();
@@ -5443,6 +5661,20 @@ function selectAllInActiveImageTool() {
   return false;
 }
 
+function exportActiveImageModule() {
+  const moduleId = activeImageModuleId();
+  const button = moduleId === "bg"
+    ? $("#bgExportButton")
+    : moduleId === "annotation"
+      ? $("#exportAnnotation")
+      : moduleId === "imageEditor"
+        ? $("#imageEditorExport")
+        : null;
+  if (!button || button.disabled) return false;
+  button.click();
+  return true;
+}
+
 function imageModuleGlobalKeyDown(event) {
   const moduleId = activeImageModuleId();
   if (!moduleId) return;
@@ -5461,12 +5693,32 @@ function imageModuleGlobalKeyDown(event) {
     if (stepActiveImageModuleZoom(zoomIn ? 1 : -1)) event.preventDefault();
     return;
   }
+  if (commandKey && event.key.toLowerCase() === "e") {
+    event.preventDefault();
+    exportActiveImageModule();
+    return;
+  }
   if (editing) return;
   if (commandKey && event.key.toLowerCase() === "a" && selectAllInActiveImageTool()) {
     event.preventDefault();
     return;
   }
   if (event.defaultPrevented) return;
+  if (moduleId === "annotation" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    const annotationShortcuts = {
+      i: () => $("#annotationFile").click(),
+      n: () => setAnnotationMode("number"),
+      m: () => setAnnotationMode("mask"),
+      b: () => setAnnotationMode("blur"),
+      g: () => setAnnotationMode("magnifier"),
+    };
+    const action = annotationShortcuts[event.key.toLowerCase()];
+    if (action) {
+      event.preventDefault();
+      action();
+      return;
+    }
+  }
   if (commandKey && event.key.toLowerCase() === "z") {
     event.preventDefault();
     runActiveImageModuleHistory(event.shiftKey);
@@ -5712,8 +5964,13 @@ function bind() {
   $("#addAnnotationNumber").onclick = () => setAnnotationMode("number");
   $("#addAnnotationMask").onclick = () => setAnnotationMode("mask");
   $("#addAnnotationBlur").onclick = () => setAnnotationMode("blur");
+  $("#addAnnotationMagnifier").onclick = () => setAnnotationMode("magnifier");
   $("#annotationBlurStrength").oninput = updateAnnotationBlurStrength;
   $("#annotationBlurStrength").onchange = pushAnnotationHistory;
+  $("#annotationMagnifierColor").oninput = updateAnnotationMagnifierStyle;
+  $("#annotationMagnifierColor").onchange = pushAnnotationHistory;
+  $("#annotationMagnifierWidth").oninput = updateAnnotationMagnifierStyle;
+  $("#annotationMagnifierWidth").onchange = pushAnnotationHistory;
   $("#annotationUndo").onclick = () => restoreAnnotationHistory(annotationState.historyIndex - 1);
   $("#annotationRedo").onclick = () => restoreAnnotationHistory(annotationState.historyIndex + 1);
   $("#confirmAnnotationNumber").onclick = confirmAnnotationNumberEdit;
