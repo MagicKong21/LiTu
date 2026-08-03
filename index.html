@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#ffffff">
   <title>荔图 · Li Tu</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css?v=20260802-litu1">
+  <link rel="stylesheet" href="./styles.css?v=20260803-litu2">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
@@ -201,7 +201,7 @@
               <label class="inline-check"><input id="bgEffectShadow" type="checkbox" disabled> 添加阴影</label>
               <label class="inline-check"><input id="bgEffectRound" type="checkbox" disabled> 添加圆角</label>
               <label class="bg-effect-size">
-                <span>大小</span>
+                <span>缩放比例</span>
                 <input id="bgEffectScale" type="range" value="90" min="40" max="150" step="1" disabled>
                 <strong id="bgEffectScaleValue">—</strong>
               </label>
@@ -230,7 +230,7 @@
           </div>
           <div class="bg-mode-toolbar" role="toolbar" aria-label="图片加底功能">
             <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
-            <button id="bgExportButton" type="button" aria-label="导出" title="导出" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="bgExportButton" type="button" aria-label="导出" title="导出（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="sendBlueBgToAnnotation" type="button" aria-label="标注" title="生成并导入图片标注" disabled><span class="tool-symbol tool-symbol-annotate"></span><small>标注</small></button>
             <button id="bgDeleteSelected" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
             <button id="bgUndo" type="button" aria-label="撤销" title="撤销" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
@@ -245,16 +245,17 @@
         <div class="annotation-actions">
             <label class="annotation-import">
               <input id="annotationFile" type="file" accept="image/*">
-              <span title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
+              <span title="导入图片（快捷键 I）"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
             </label>
-            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出图片" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出图片（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="annotationViewMode" type="button" aria-label="查看" title="查看（快捷键 V）" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
-            <button id="addAnnotationNumber" type="button" aria-label="添加序号" title="添加序号" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
-            <button id="addAnnotationMask" type="button" aria-label="添加遮挡" title="添加遮挡" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
-            <button id="addAnnotationBlur" type="button" aria-label="高斯模糊" title="高斯模糊" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
-            <button id="deleteAnnotation" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
-            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="annotationRedo" type="button" aria-label="重做" title="重做" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="addAnnotationNumber" type="button" aria-label="添加序号" title="添加序号（快捷键 N）" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
+            <button id="addAnnotationMask" type="button" aria-label="添加遮挡" title="添加遮挡（快捷键 M）" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
+            <button id="addAnnotationBlur" type="button" aria-label="高斯模糊" title="高斯模糊（快捷键 B）" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
+            <button id="addAnnotationMagnifier" type="button" aria-label="添加放大镜" title="添加放大镜（快捷键 G）" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
+            <button id="deleteAnnotation" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选（快捷键 Delete）" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
+            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销（快捷键 ⌘Z）" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="annotationRedo" type="button" aria-label="重做" title="重做（快捷键 ⇧⌘Z）" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
         </div>
         <div class="annotation-stage-wrap">
           <div id="annotationBlurControls" class="annotation-blur-controls" hidden>
@@ -263,6 +264,16 @@
               <strong id="annotationBlurStrengthValue">16px</strong>
             </label>
             <input id="annotationBlurStrength" type="range" min="2" max="40" step="1" value="16">
+          </div>
+          <div id="annotationMagnifierControls" class="annotation-magnifier-controls" hidden>
+            <label for="annotationMagnifierColor">颜色
+              <input id="annotationMagnifierColor" type="color" value="#ff594b">
+            </label>
+            <label for="annotationMagnifierWidth">
+              <span>线条粗细</span>
+              <strong id="annotationMagnifierWidthValue">8px</strong>
+            </label>
+            <input id="annotationMagnifierWidth" type="range" min="2" max="24" step="1" value="8">
           </div>
           <div id="annotationNumberEditor" class="annotation-number-editor" hidden>
             <label for="annotationNumberInput">序号</label>
@@ -294,7 +305,7 @@
               <input id="imageEditorFile" type="file" accept="image/*">
               <span title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
             </label>
-            <button id="imageEditorExport" type="button" aria-label="导出图片" title="导出图片" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="imageEditorExport" type="button" aria-label="导出图片" title="导出图片（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="imageEditorMoveMode" type="button" aria-label="查看" title="查看" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
             <button id="imageEditorRemoveMode" type="button" aria-label="区段删除" title="区段删除" disabled><span class="tool-symbol tool-symbol-remove-section"></span><small>删段</small></button>
             <button id="imageEditorCropMode" type="button" aria-label="画布裁切 C" title="画布裁切（快捷键 C）" disabled><span class="tool-symbol tool-symbol-crop"></span><small>裁切</small></button>
@@ -475,6 +486,6 @@
 
   <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
 
-  <script src="./app.js?v=20260802-litu1"></script>
+  <script src="./app.js?v=20260803-litu2"></script>
 </body>
 </html>
