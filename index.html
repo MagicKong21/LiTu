@@ -3,18 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="荔图（Li Tu）是一款在浏览器本地运行的图片加底、图片标注与图片编辑工具。">
+  <meta name="description" content="荔图（Li Tu）是一款在浏览器本地运行的图片美化与图片编辑工具。">
   <meta name="theme-color" content="#ffffff">
   <title>荔图 · Li Tu</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css?v=20260803-litu2">
+  <link rel="stylesheet" href="./styles.css?v=20260810-litu-two-tools1">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
     <strong class="online-tool-name">荔图 <span>Li Tu</span></strong>
     <div class="tab-buttons">
-      <button data-tab="bg" class="active">图片加底</button>
-      <button data-tab="annotation">图片标注</button>
+      <button data-tab="bg" class="active">图片美化</button>
       <button data-tab="imageEditor">图片编辑</button>
     </div>
     <button id="shutdownToolbox" class="shutdown-button" type="button" hidden>关闭</button>
@@ -188,7 +187,7 @@
     <section id="bg" class="panel active">
       <div class="box bg-box">
         <input id="bgFiles" type="file" accept="image/*" multiple hidden>
-        <input id="bgBlueMode" type="checkbox" hidden>
+        <input id="bgBlueMode" type="checkbox" hidden checked>
         <div class="bg-workbench">
           <aside class="bg-material-pane">
             <div id="bgMaterialList" class="bg-material-list">
@@ -196,20 +195,17 @@
             </div>
           </aside>
           <div class="bg-output">
-            <div id="bgEffectToolbar" class="bg-effect-toolbar is-disabled">
-              <button id="bgModeToggleButton" class="bg-mode-toggle active" type="button" aria-label="切换到蓝底模式" title="切换到蓝底模式"><span class="tool-symbol tool-symbol-layers"></span><span id="bgModeToggleLabel">蓝底模式</span></button>
-              <label class="inline-check"><input id="bgEffectShadow" type="checkbox" disabled> 添加阴影</label>
-              <label class="inline-check"><input id="bgEffectRound" type="checkbox" disabled> 添加圆角</label>
-              <label class="bg-effect-size">
-                <span>缩放比例</span>
-                <input id="bgEffectScale" type="range" value="90" min="40" max="150" step="1" disabled>
-                <strong id="bgEffectScaleValue">—</strong>
-              </label>
-            </div>
             <div id="blueBgEditor" class="blue-bg-editor" hidden>
-              <div id="blueBgStage" class="blue-bg-stage" tabindex="0" aria-label="蓝色底图预览画布">
+              <div id="blueBgStage" class="blue-bg-stage" tabindex="0" aria-label="图片美化画布">
                 <canvas id="blueBgCanvas" width="2000" height="1083"></canvas>
+                <canvas id="bgAnnotationCanvas" class="bg-annotation-canvas" width="2000" height="1083" hidden></canvas>
                 <div id="blueBgSelectionOverlay" class="image-editor-selection-overlay canvas-selection-overlay" hidden>
+                  <i data-selection-handle="nw"></i>
+                  <i data-selection-handle="ne"></i>
+                  <i data-selection-handle="se"></i>
+                  <i data-selection-handle="sw"></i>
+                </div>
+                <div id="bgAnnotationSelectionOverlay" class="image-editor-selection-overlay canvas-selection-overlay" hidden>
                   <i data-selection-handle="nw"></i>
                   <i data-selection-handle="ne"></i>
                   <i data-selection-handle="se"></i>
@@ -224,38 +220,178 @@
                 <span id="blueBgStatus" class="muted">拖动图片调整位置，拖动四角调整大小。</span>
               </div>
             </div>
-            <div id="bgPreview" class="preview-grid bg-preview is-empty">
+            <div id="bgPreview" class="preview-grid bg-preview is-empty" hidden>
               <div class="bg-preview-empty-state">暂无预览</div>
             </div>
           </div>
-          <div class="bg-mode-toolbar" role="toolbar" aria-label="图片加底功能">
-            <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
-            <button id="bgExportButton" type="button" aria-label="导出" title="导出（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
-            <button id="sendBlueBgToAnnotation" type="button" aria-label="标注" title="生成并导入图片标注" disabled><span class="tool-symbol tool-symbol-annotate"></span><small>标注</small></button>
-            <button id="bgDeleteSelected" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
-            <button id="bgUndo" type="button" aria-label="撤销" title="撤销" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="bgRedo" type="button" aria-label="重做" title="重做" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+          <div class="bg-inspector-column" aria-label="功能扩展区">
+            <div id="bgEffectToolbar" class="bg-effect-toolbar is-disabled" aria-label="前景图效果设置">
+              <button id="bgModeToggleButton" hidden type="button" aria-label="统一画布模式" title="统一画布模式"></button>
+              <label class="bg-effect-switch-row"><input id="bgEffectShadow" type="checkbox" disabled> 阴影效果</label>
+              <label class="bg-effect-switch-row"><input id="bgEffectRound" type="checkbox" disabled> 圆角效果</label>
+              <label class="bg-effect-control bg-effect-radius">
+                <span class="bg-effect-control-heading"><span>圆角大小</span><strong id="bgEffectRoundRadiusValue">32 px</strong></span>
+                <input id="bgEffectRoundRadius" type="range" value="32" min="0" max="128" step="1" disabled>
+              </label>
+              <label class="bg-effect-control bg-effect-size">
+                <span class="bg-effect-control-heading"><span>图片缩放</span><strong id="bgEffectScaleValue">—</strong></span>
+                <input id="bgEffectScale" type="range" value="90" min="10" max="200" step="1" disabled>
+              </label>
+              <label class="bg-effect-control bg-canvas-zoom-control">
+                <span class="bg-effect-control-heading"><span>画面缩放</span><strong id="bgCanvasZoomValue">100%</strong></span>
+                <input id="bgCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
+              </label>
+            </div>
+            <aside id="bgBackgroundDialog" class="bg-background-panel" aria-label="更改背景" hidden>
+              <div class="bg-background-form">
+                <input id="bgBackgroundType" type="hidden" value="lizhi">
+                <input id="bgBackgroundGradient" type="hidden" value="sky">
+                <input id="bgWallpaperSelect" type="hidden" value="macos-11">
+                <input id="bgCanvasAspect" type="hidden" value="default">
+                <input id="bgBackgroundFile" type="file" accept="image/*" hidden>
+                <select id="bgBackgroundMaterial" hidden><option value="">不使用素材库图片</option></select>
+                <section class="bg-background-section" aria-labelledby="bgBasicTitle">
+                  <h3 id="bgBasicTitle">基础款</h3>
+                  <div class="bg-background-tile-grid">
+                    <button class="bg-background-tile" type="button" data-bg-type="lizhi" title="荔枝默认">
+                      <span class="bg-background-tile-preview bg-tile-lizhi"></span><strong>荔枝默认</strong>
+                    </button>
+                    <button class="bg-background-tile" type="button" data-bg-type="blue" title="荔枝蓝 #3FB9FF">
+                      <span class="bg-background-tile-preview bg-tile-blue"></span><strong>蓝色</strong>
+                    </button>
+                    <div class="bg-background-tile-slot">
+                      <button class="bg-background-tile" type="button" data-bg-type="solid" title="自定义颜色">
+                        <span id="bgSolidTilePreview" class="bg-background-tile-preview bg-tile-solid"></span><strong>自定义</strong>
+                      </button>
+                      <input id="bgBackgroundColor" class="bg-background-color-picker" type="color" value="#3FB9FF" aria-label="选择自定义颜色" title="选择自定义颜色">
+                    </div>
+                  </div>
+                </section>
+                <section class="bg-background-section" aria-labelledby="bgGradientTitle">
+                  <h3 id="bgGradientTitle">渐变色</h3>
+                  <div class="bg-background-tile-grid">
+                    <button class="bg-background-tile" type="button" data-bg-type="gradient" data-bg-gradient="sky" title="晴空蓝"><span class="bg-background-tile-preview" style="background:linear-gradient(135deg,#42B5F5,#E8F5FF)"></span><strong>晴空蓝</strong></button>
+                    <button class="bg-background-tile" type="button" data-bg-type="gradient" data-bg-gradient="sunset" title="晚霞橙粉"><span class="bg-background-tile-preview" style="background:linear-gradient(135deg,#FF9A9E,#FAD0C4)"></span><strong>晚霞</strong></button>
+                    <button class="bg-background-tile" type="button" data-bg-type="gradient" data-bg-gradient="aurora" title="极光紫绿"><span class="bg-background-tile-preview" style="background:linear-gradient(135deg,#A8EDEA,#FED6E3)"></span><strong>极光</strong></button>
+                    <button class="bg-background-tile" type="button" data-bg-type="gradient" data-bg-gradient="midnight" title="午夜蓝紫"><span class="bg-background-tile-preview" style="background:linear-gradient(135deg,#1B2755,#6B4FA1)"></span><strong>午夜</strong></button>
+                    <button class="bg-background-tile" type="button" data-bg-type="gradient" data-bg-gradient="mint" title="薄荷奶油"><span class="bg-background-tile-preview" style="background:linear-gradient(135deg,#D4FC79,#96E6A1)"></span><strong>薄荷</strong></button>
+                  </div>
+                </section>
+                <section class="bg-background-section" aria-labelledby="bgWallpaperTitle">
+                  <h3 id="bgWallpaperTitle">macOS 壁纸</h3>
+                  <div id="bgWallpaperChoices" class="bg-background-tile-grid"></div>
+                </section>
+                <section class="bg-background-section bg-aspect-section" aria-labelledby="bgAspectTitle">
+                  <h3 id="bgAspectTitle">画面比例</h3>
+                  <div class="bg-aspect-tile-grid">
+                    <button type="button" data-bg-aspect="default" title="按照首张图片自动生成">默认</button>
+                    <button type="button" data-bg-aspect="blue" title="2000 : 1083">蓝底</button>
+                    <button type="button" data-bg-aspect="1:1" title="1 : 1">正方形</button>
+                    <button type="button" data-bg-aspect="4:3" title="4 : 3">横图</button>
+                    <button type="button" data-bg-aspect="3:4" title="3 : 4">竖图</button>
+                    <button type="button" data-bg-aspect="16:9" title="16 : 9">宽屏</button>
+                    <button type="button" data-bg-aspect="9:16" title="9 : 16">竖屏</button>
+                  </div>
+                </section>
+                <p id="bgBackgroundFeedback" class="bg-background-feedback" role="status" hidden></p>
+              </div>
+            </aside>
+            <aside id="bgAnnotationInspector" class="bg-annotation-inspector" aria-label="标注效果调节" hidden>
+              <div id="bgAnnotationIdle" class="bg-annotation-idle">在画布中创建或选中标注后，可在这里调节效果。</div>
+              <div id="bgAnnotationMaskControls" class="bg-annotation-control" hidden>
+                <label class="bg-effect-switch-row"><input id="bgAnnotationMaskShadow" type="checkbox"> 阴影效果</label>
+                <label class="bg-effect-switch-row"><input id="bgAnnotationMaskRound" type="checkbox"> 圆角效果</label>
+                <label id="bgAnnotationMaskRadiusControl" class="bg-effect-control">
+                  <span class="bg-effect-control-heading"><span>圆角大小</span><strong id="bgAnnotationMaskRoundRadiusValue">16 px</strong></span>
+                  <input id="bgAnnotationMaskRoundRadius" type="range" min="0" max="80" value="16" step="1" disabled>
+                </label>
+                <span class="bg-effect-control-heading"><span>遮挡颜色</span></span>
+                <div id="bgAnnotationMaskColors" class="bg-annotation-color-grid" role="group" aria-label="遮挡颜色">
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#98b2c0"><span style="--swatch:#98b2c0"></span><strong>默认</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff594b"><span style="--swatch:#ff594b"></span><strong>红色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
+                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationMaskColor" type="color" value="#98b2c0" aria-label="自定义遮挡颜色"></span><strong>自定义</strong></label>
+                </div>
+              </div>
+              <div id="bgAnnotationBlurControls" class="bg-annotation-control" hidden>
+                <label class="bg-effect-switch-row"><input id="bgAnnotationBlurShadow" type="checkbox"> 阴影效果</label>
+                <span class="bg-effect-control-heading"><span>模糊强度</span><strong id="bgAnnotationBlurStrengthValue">16 px</strong></span>
+                <input id="bgAnnotationBlurStrength" type="range" min="2" max="40" value="16">
+              </div>
+              <div id="bgAnnotationNumberControls" class="bg-annotation-control" hidden>
+                <label class="bg-effect-switch-row"><input id="bgAnnotationNumberShadow" type="checkbox"> 阴影效果</label>
+                <span class="bg-effect-control-heading"><span>序号大小</span><span class="bg-annotation-value-actions"><button id="bgAnnotationNumberReset" type="button" aria-label="恢复默认大小" title="恢复默认大小">↻</button><strong id="bgAnnotationNumberSizeValue">110 px</strong></span></span>
+                <input id="bgAnnotationNumberSize" type="range" min="40" max="240" value="110" step="2">
+                <span class="bg-effect-control-heading"><span>序号颜色</span></span>
+                <div id="bgAnnotationNumberColors" class="bg-annotation-color-grid" role="group" aria-label="序号颜色">
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ff5a52"><span style="--swatch:#ff5a52"></span><strong>默认</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>紫色</strong></button>
+                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationNumberColor" type="color" value="#ff5a52" aria-label="自定义序号颜色"></span><strong>自定义</strong></label>
+                </div>
+              </div>
+              <div id="bgAnnotationMagnifierControls" class="bg-annotation-control" hidden>
+                <label class="bg-effect-switch-row"><input id="bgAnnotationMagnifierShadow" type="checkbox"> 阴影效果</label>
+                <span class="bg-effect-control-heading"><span>线条粗细</span><strong id="bgAnnotationMagnifierWidthValue">5 px</strong></span>
+                <input id="bgAnnotationMagnifierWidth" type="range" min="2" max="12" value="5">
+                <span class="bg-effect-control-heading"><span>线条颜色</span></span>
+                <div id="bgAnnotationMagnifierColors" class="bg-annotation-color-grid" role="group" aria-label="线条颜色">
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ff594b"><span style="--swatch:#ff594b"></span><strong>默认</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>紫色</strong></button>
+                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationMagnifierColor" type="color" value="#ff594b" aria-label="自定义线条颜色"></span><strong>自定义</strong></label>
+                </div>
+              </div>
+            </aside>
+          </div>
+          <div class="bg-mode-toolbar" role="toolbar" aria-label="图片美化功能">
+            <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
+            <button id="bgExportButton" type="button" aria-label="导出" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="bgViewMode" type="button" aria-label="移动" title="移动 (V)" disabled><span class="tool-symbol tool-symbol-move"></span><small>移动</small></button>
+            <button id="bgBackgroundButton" type="button" aria-label="更改背景" title="更改背景 (B)"><span class="tool-symbol tool-symbol-background"></span><small>背景</small></button>
+            <button id="bgAddAnnotationNumber" type="button" aria-label="序号" title="序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
+            <button id="bgAddAnnotationMask" type="button" aria-label="遮挡" title="遮挡 (M)" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
+            <button id="bgAddAnnotationBlur" type="button" aria-label="模糊" title="模糊 (F)" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
+            <button id="bgAddAnnotationMagnifier" type="button" aria-label="放大镜" title="放大镜 (G)" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
+            <button id="bgDeleteSelected" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选 (Delete)" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
+            <button id="bgUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="bgRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
           </div>
         </div>
       </div>
     </section>
 
-    <section id="annotation" class="panel">
+    <section id="annotation" class="panel" hidden aria-hidden="true">
       <div class="box annotation-box">
         <div class="annotation-actions">
             <label class="annotation-import">
               <input id="annotationFile" type="file" accept="image/*">
-              <span title="导入图片（快捷键 I）"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
+              <span title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
             </label>
-            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出图片（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
-            <button id="annotationViewMode" type="button" aria-label="查看" title="查看（快捷键 V）" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
-            <button id="addAnnotationNumber" type="button" aria-label="添加序号" title="添加序号（快捷键 N）" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
-            <button id="addAnnotationMask" type="button" aria-label="添加遮挡" title="添加遮挡（快捷键 M）" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
-            <button id="addAnnotationBlur" type="button" aria-label="高斯模糊" title="高斯模糊（快捷键 B）" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
-            <button id="addAnnotationMagnifier" type="button" aria-label="添加放大镜" title="添加放大镜（快捷键 G）" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
-            <button id="deleteAnnotation" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选（快捷键 Delete）" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
-            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销（快捷键 ⌘Z）" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="annotationRedo" type="button" aria-label="重做" title="重做（快捷键 ⇧⌘Z）" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="annotationViewMode" type="button" aria-label="查看" title="查看 (V)" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
+            <button id="addAnnotationNumber" type="button" aria-label="添加序号" title="添加序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
+            <button id="addAnnotationMask" type="button" aria-label="添加遮挡" title="添加遮挡 (M)" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
+            <button id="addAnnotationBlur" type="button" aria-label="高斯模糊" title="高斯模糊 (F)" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
+            <button id="addAnnotationMagnifier" type="button" aria-label="添加放大镜" title="添加放大镜 (G)" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
+            <button id="deleteAnnotation" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选 (Delete)" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
+            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="annotationRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
         </div>
         <div class="annotation-stage-wrap">
           <div id="annotationBlurControls" class="annotation-blur-controls" hidden>
@@ -271,9 +407,16 @@
             </label>
             <label for="annotationMagnifierWidth">
               <span>线条粗细</span>
-              <strong id="annotationMagnifierWidthValue">8px</strong>
+              <strong id="annotationMagnifierWidthValue">5px</strong>
             </label>
-            <input id="annotationMagnifierWidth" type="range" min="2" max="24" step="1" value="8">
+            <input id="annotationMagnifierWidth" type="range" min="2" max="12" step="1" value="5">
+          </div>
+          <div id="annotationNumberControls" class="annotation-number-controls" hidden>
+            <label for="annotationNumberSize">
+              <span>序号大小</span>
+              <strong id="annotationNumberSizeValue">110px</strong>
+            </label>
+            <input id="annotationNumberSize" type="range" min="40" max="240" step="2" value="110">
           </div>
           <div id="annotationNumberEditor" class="annotation-number-editor" hidden>
             <label for="annotationNumberInput">序号</label>
@@ -303,23 +446,23 @@
           <div class="image-editor-actions">
             <label class="annotation-import">
               <input id="imageEditorFile" type="file" accept="image/*">
-              <span title="导入图片"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
+              <span title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
             </label>
-            <button id="imageEditorExport" type="button" aria-label="导出图片" title="导出图片（快捷键 ⌘E）" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
-            <button id="imageEditorMoveMode" type="button" aria-label="查看" title="查看" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
-            <button id="imageEditorRemoveMode" type="button" aria-label="区段删除" title="区段删除" disabled><span class="tool-symbol tool-symbol-remove-section"></span><small>删段</small></button>
-            <button id="imageEditorCropMode" type="button" aria-label="画布裁切 C" title="画布裁切（快捷键 C）" disabled><span class="tool-symbol tool-symbol-crop"></span><small>裁切</small></button>
-            <button id="imageEditorGradientMode" type="button" aria-label="渐变透明" title="绘制透明度渐变" disabled><span class="tool-symbol tool-symbol-gradient"></span><small>渐变</small></button>
+            <button id="imageEditorExport" type="button" aria-label="导出图片" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="imageEditorMoveMode" type="button" aria-label="查看" title="查看 (V)" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
+            <button id="imageEditorRemoveMode" type="button" aria-label="区段删除" title="区段删除 (R)" disabled><span class="tool-symbol tool-symbol-remove-section"></span><small>删段</small></button>
+            <button id="imageEditorCropMode" type="button" aria-label="画布裁切" title="画布裁切 (C)" disabled><span class="tool-symbol tool-symbol-crop"></span><small>裁切</small></button>
+            <button id="imageEditorGradientMode" type="button" aria-label="渐变透明" title="渐变透明 (G)" disabled><span class="tool-symbol tool-symbol-gradient"></span><small>渐变</small></button>
             <div class="image-editor-more">
               <button id="imageEditorMoreButton" type="button" aria-label="更多工具" title="更多工具" aria-expanded="false" disabled><span class="tool-symbol tool-symbol-more"></span><small>更多</small></button>
               <div id="imageEditorMoreMenu" class="image-editor-more-menu" hidden>
-                <button id="imageEditorSplitMode" type="button" aria-label="线条分隔" title="线条分隔" disabled><span class="tool-symbol tool-symbol-split"></span><small>分隔</small></button>
-                <button id="imageEditorBlendMode" type="button" aria-label="图片融合" title="图片融合" disabled><span class="tool-symbol tool-symbol-blend"></span><small>融合</small></button>
-                <button id="imageEditorWindowMode" type="button" aria-label="窗口提取" title="自动查找窗口并进入人工修正" disabled><span class="tool-symbol tool-symbol-window"></span><small>窗口</small></button>
+                <button id="imageEditorSplitMode" type="button" aria-label="线条分隔" title="线条分隔 (S)" disabled><span class="tool-symbol tool-symbol-split"></span><small>分隔</small></button>
+                <button id="imageEditorBlendMode" type="button" aria-label="图片融合" title="图片融合 (B)" disabled><span class="tool-symbol tool-symbol-blend"></span><small>融合</small></button>
+                <button id="imageEditorWindowMode" type="button" aria-label="窗口提取" title="窗口提取 (W)" disabled><span class="tool-symbol tool-symbol-window"></span><small>窗口</small></button>
               </div>
             </div>
-            <button id="imageEditorUndo" type="button" aria-label="撤销" title="撤销" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="imageEditorRedo" type="button" aria-label="重做" title="重做" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="imageEditorUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="imageEditorRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
           </div>
         <div id="imageEditorOptions" class="image-editor-options" hidden>
           <div id="imageEditorCompositeControls" class="image-editor-composite-controls" hidden>
@@ -353,7 +496,7 @@
             <i data-selection-handle="w"></i>
             <div class="image-editor-selection-actions">
               <button id="imageEditorApplySelection" class="selection-confirm" type="button" aria-label="应用所选区域" title="应用所选区域">✓</button>
-              <button id="imageEditorCancelSelection" class="selection-cancel" type="button" aria-label="取消框选" title="取消框选">×</button>
+              <button id="imageEditorCancelSelection" class="selection-cancel" type="button" aria-label="取消框选" title="取消框选 (⌘ D)">×</button>
             </div>
           </div>
           <div id="imageEditorGradientOverlay" class="image-editor-gradient-overlay" hidden>
@@ -486,6 +629,6 @@
 
   <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
 
-  <script src="./app.js?v=20260803-litu2"></script>
+  <script src="./app.js?v=20260810-litu-two-tools1"></script>
 </body>
 </html>

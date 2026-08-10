@@ -37,21 +37,57 @@ const MAX_DISTRIBUTION_VERSIONS = 4;
 const ANNOTATION_NUMBER_SIZE = 110;
 const ANNOTATION_HANDLE_SIZE = 18;
 const ANNOTATION_MAGNIFIER_COLOR = "#ff594b";
-const ANNOTATION_MAGNIFIER_LINE_WIDTH = 8;
+const ANNOTATION_MAGNIFIER_LINE_WIDTH = 5;
 const IMAGE_EXPORT_WIDTH = 2000;
 const SYSTEM_CORNER_RADIUS = 32;
 const CONTINUOUS_CORNER_EXPONENT = 4;
 const CONTINUOUS_CORNER_EXTENT = 1.52866483;
-const BLUE_BG_SHADOW_BLUR = 38;
-const BLUE_BG_SHADOW_OFFSET_Y = 18;
 const BLUE_BG_ASSET_URL = "./assets/lizhi-blue-wallpaper.png";
-const BG_HEADER_ASSET_URL = "./assets/IMG_header.png";
-const BG_FOOTER_ASSET_URL = "./assets/IMG_footer.png";
 const BLUE_BG_MAX_LAYERS = 3;
 const BLUE_BG_HANDLE_SIZE = 28;
+const LIZHI_DEFAULT_COLOR = "#8CC6FF";
+const BG_DEFAULT_COLOR = "#3FB9FF";
+const BG_CUSTOM_COLOR_KEY = "litu.backgroundCustomColor.v1";
+const BG_ASPECTS = {
+  default: { label: "默认", value: "default" },
+  blue: { label: "蓝底（2000 / 1083）", value: "blue" },
+  square: { label: "正方形（1 / 1）", value: "1:1", ratio: 1 },
+  landscape: { label: "横图（4 / 3）", value: "4:3", ratio: 4 / 3 },
+  portrait: { label: "竖图（3 / 4）", value: "3:4", ratio: 3 / 4 },
+  widescreen: { label: "宽屏（16 / 9）", value: "16:9", ratio: 16 / 9 },
+  vertical: { label: "竖屏（9 / 16）", value: "9:16", ratio: 9 / 16 },
+};
+const BG_GRADIENT_PRESETS = [
+  { id: "sky", label: "晴空蓝", from: "#42B5F5", to: "#E8F5FF", angle: 135 },
+  { id: "sunset", label: "晚霞橙粉", from: "#FF9A9E", to: "#FAD0C4", angle: 135 },
+  { id: "aurora", label: "极光紫绿", from: "#A8EDEA", to: "#FED6E3", angle: 135 },
+  { id: "midnight", label: "午夜蓝紫", from: "#1B2755", to: "#6B4FA1", angle: 135 },
+  { id: "mint", label: "薄荷奶油", from: "#D4FC79", to: "#96E6A1", angle: 135 },
+];
+const MACOS_WALLPAPERS = [
+  { id: "macos-11", label: "Big Sur", url: "./assets/wallpapers/macos-11-big-sur.jpg", source: "512 Pixels" },
+  { id: "macos-12", label: "Monterey", url: "./assets/wallpapers/macos-12-monterey.jpg", source: "AppleWalls" },
+  { id: "macos-13", label: "Ventura", url: "./assets/wallpapers/macos-13-ventura.webp", source: "AppleWalls" },
+  { id: "macos-14", label: "Sonoma", url: "./assets/wallpapers/macos-14-sonoma.webp", source: "AppleWalls" },
+  { id: "macos-15", label: "Sequoia", url: "./assets/wallpapers/macos-15-sequoia.webp", source: "AppleWalls" },
+  { id: "macos-26", label: "Tahoe", url: "./assets/wallpapers/macos-26-tahoe.jpg", source: "512 Pixels" },
+  { id: "macos-27", label: "Golden Gate", url: "./assets/wallpapers/macos-27-golden-gate.jpg", source: "Basic Apple Guy" },
+];
 let marchingAntsOffset = 0;
 const blueBgState = {
   background: null,
+  backgroundType: "lizhi",
+  backgroundColor: BG_DEFAULT_COLOR,
+  backgroundGradient: "sky",
+  backgroundImage: null,
+  backgroundImageUrl: "",
+  backgroundImageName: "",
+  aspectMode: "default",
+  canvasWidth: 2000,
+  canvasHeight: 1083,
+  defaultAspect: 2000 / 1083,
+  headerImage: null,
+  footerImage: null,
   layers: [],
   selectedId: null,
   selectedIds: [],
@@ -63,6 +99,8 @@ const blueBgState = {
   baseDisplayWidth: 0,
   baseDisplayHeight: 0,
   gestureStartZoom: 1,
+  inspectorMode: "effects",
+  toolMode: "move",
   snapGuides: { vertical: [], horizontal: [] },
 };
 let bgMaterials = [];
@@ -72,7 +110,7 @@ let bgGeneratedResults = [];
 let bgHistory = [];
 let bgHistoryIndex = -1;
 const bgRenderControllers = new WeakMap();
-let bgDecorAssetsPromise = null;
+const blueBgLayerSurfaceCache = new WeakMap();
 const imageEditorState = {
   documentCanvas: document.createElement("canvas"),
   sourceName: "",
@@ -90,13 +128,25 @@ const imageEditorState = {
   gestureStartZoom: 1,
   secondImage: null,
 };
-const annotationState = {
+function createAnnotationState(host = "annotation") {
+  return {
+  host,
   image: null,
   sourceName: "",
   mode: "view",
   items: [],
   selectedId: null,
   selectedIds: [],
+  selectedPart: null,
+  numberSize: ANNOTATION_NUMBER_SIZE,
+  numberColor: "#ff5a52",
+  blurStrength: 16,
+  maskColor: "#98b2c0",
+  maskRound: false,
+  maskRoundRadius: 16,
+  magnifierColor: ANNOTATION_MAGNIFIER_COLOR,
+  magnifierWidth: ANNOTATION_MAGNIFIER_LINE_WIDTH,
+  shadows: { number: false, mask: false, blur: false, magnifier: false },
   nextNumber: 1,
   nextId: 1,
   interaction: null,
@@ -108,7 +158,11 @@ const annotationState = {
   editingNumberId: null,
   history: [],
   historyIndex: -1,
-};
+  };
+}
+const nativeAnnotationState = createAnnotationState("annotation");
+const bgAnnotationState = createAnnotationState("bg");
+let annotationState = nativeAnnotationState;
 let completionAudioCtx = null;
 
 function canvasDisplayUnit(canvas) {
@@ -159,11 +213,22 @@ function syncCanvasSelectionOverlay(stage, canvas, overlay, bounds) {
   const canvasRect = canvas.getBoundingClientRect();
   const scaleX = canvasRect.width / Math.max(1, canvas.width);
   const scaleY = canvasRect.height / Math.max(1, canvas.height);
+  const frame = selectionFrameBounds(canvas, bounds);
   overlay.hidden = false;
-  overlay.style.left = `${canvasRect.left - stageRect.left + stage.scrollLeft + bounds.x * scaleX}px`;
-  overlay.style.top = `${canvasRect.top - stageRect.top + stage.scrollTop + bounds.y * scaleY}px`;
-  overlay.style.width = `${Math.max(2, bounds.width * scaleX)}px`;
-  overlay.style.height = `${Math.max(2, bounds.height * scaleY)}px`;
+  overlay.style.left = `${canvasRect.left - stageRect.left + stage.scrollLeft + frame.x * scaleX}px`;
+  overlay.style.top = `${canvasRect.top - stageRect.top + stage.scrollTop + frame.y * scaleY}px`;
+  overlay.style.width = `${Math.max(2, frame.width * scaleX)}px`;
+  overlay.style.height = `${Math.max(2, frame.height * scaleY)}px`;
+}
+
+function selectionFrameBounds(canvas, bounds) {
+  const margin = canvasDisplayUnit(canvas);
+  return {
+    x: bounds.x - margin,
+    y: bounds.y - margin,
+    width: bounds.width + margin * 2,
+    height: bounds.height + margin * 2,
+  };
 }
 
 function unionBounds(boundsList) {
@@ -347,14 +412,24 @@ function playCompletionSound() {
 }
 
 function showTab(id) {
+  annotationState = id === "bg" ? bgAnnotationState : nativeAnnotationState;
   $$(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === id));
   $$(".panel").forEach(panel => panel.classList.toggle("active", panel.id === id));
+  if (id === "bg") requestAnimationFrame(syncBgMaterialColumnWidth);
   if (id === "distribution") scheduleDistributionScrollAnchors();
   if (id === "distribution" && !state.distribution.loaded && !state.distribution.loading) {
     loadDistributionTasks().catch(err => {
       $("#distributionTaskList").innerHTML = `<div class="distribution-empty">${escapeHtml(err.message)}</div>`;
     });
   }
+}
+
+function syncBgMaterialColumnWidth() {
+  const tab = document.querySelector('.tabs button[data-tab="bg"]');
+  const workbench = $("#bg .bg-workbench");
+  if (!tab || !workbench || window.innerWidth <= 900) return;
+  const width = Math.round(tab.getBoundingClientRect().right - workbench.getBoundingClientRect().left);
+  if (width > 0) workbench.style.setProperty("--bg-material-column-width", `${width}px`);
 }
 
 async function api(path, payload) {
@@ -1222,13 +1297,22 @@ function blueBgStatus(message) {
 }
 
 function applyBlueBgZoom(zoom) {
-  if (!blueBgState.background || !blueBgState.baseDisplayWidth) return;
+  if (!blueBgState.canvasWidth || !blueBgState.baseDisplayWidth) return;
   const canvas = blueBgCanvas();
-  blueBgState.zoom = Math.max(1, Math.min(20, zoom));
+  blueBgState.zoom = Math.max(0.5, Math.min(20, zoom));
   canvas.style.width = `${blueBgState.baseDisplayWidth * blueBgState.zoom}px`;
   canvas.style.height = `${blueBgState.baseDisplayHeight * blueBgState.zoom}px`;
   canvas.style.imageRendering = blueBgState.zoom >= 4 ? "pixelated" : "auto";
+  const annotationOverlay = $("#bgAnnotationCanvas");
+  if (annotationOverlay) {
+    annotationOverlay.style.width = canvas.style.width;
+    annotationOverlay.style.height = canvas.style.height;
+    annotationOverlay.style.imageRendering = canvas.style.imageRendering;
+  }
   $("#blueBgStage").classList.toggle("at-base-zoom", blueBgState.zoom <= 1.001);
+  const zoomPercent = Math.round(blueBgState.zoom * 100);
+  if ($("#bgCanvasZoom")) $("#bgCanvasZoom").value = String(zoomPercent);
+  if ($("#bgCanvasZoomValue")) $("#bgCanvasZoomValue").textContent = `${zoomPercent}%`;
   requestAnimationFrame(() => {
     syncCanvasSelectionOverlays(
       $("#blueBgStage"),
@@ -1236,18 +1320,37 @@ function applyBlueBgZoom(zoom) {
       $("#blueBgSelectionOverlay"),
       blueBgSelectionEntries()
     );
+    withAnnotationState(bgAnnotationState, () => {
+      renderAnnotationCanvas(
+        blueBgState.toolMode === "annotation" || selectedAnnotationItems().length > 0
+      );
+    });
   });
 }
 
 function resetBlueBgZoom() {
   const canvas = blueBgCanvas();
-  blueBgState.zoom = 1;
   canvas.style.width = "";
   canvas.style.height = "";
+  canvas.style.maxWidth = "";
+  canvas.style.maxHeight = "";
+  const annotationOverlay = $("#bgAnnotationCanvas");
+  if (annotationOverlay) {
+    annotationOverlay.style.width = "";
+    annotationOverlay.style.height = "";
+    annotationOverlay.style.maxWidth = "";
+    annotationOverlay.style.maxHeight = "";
+  }
+  blueBgState.zoom = 1;
+  blueBgState.baseDisplayWidth = 0;
+  blueBgState.baseDisplayHeight = 0;
   requestAnimationFrame(() => {
+    if (!blueBgState.canvasWidth) return;
     const rect = canvas.getBoundingClientRect();
     blueBgState.baseDisplayWidth = rect.width;
     blueBgState.baseDisplayHeight = rect.height;
+    canvas.style.maxWidth = "none";
+    canvas.style.maxHeight = "none";
     applyBlueBgZoom(1);
   });
 }
@@ -1255,32 +1358,30 @@ function resetBlueBgZoom() {
 function setBlueBgZoomAtPoint(nextZoom, clientX, clientY) {
   const stage = $("#blueBgStage");
   const canvas = blueBgCanvas();
-  const rect = canvas.getBoundingClientRect();
-  const ratioX = rect.width ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0.5;
-  const ratioY = rect.height ? Math.max(0, Math.min(1, (clientY - rect.top) / rect.height)) : 0.5;
-  const beforeWidth = rect.width;
-  const beforeHeight = rect.height;
+  const before = canvas.getBoundingClientRect();
+  const relativeX = before.width ? Math.max(0, Math.min(1, (clientX - before.left) / before.width)) : 0.5;
+  const relativeY = before.height ? Math.max(0, Math.min(1, (clientY - before.top) / before.height)) : 0.5;
   applyBlueBgZoom(nextZoom);
   const after = canvas.getBoundingClientRect();
-  stage.scrollLeft += ratioX * (after.width - beforeWidth);
-  stage.scrollTop += ratioY * (after.height - beforeHeight);
+  stage.scrollLeft += after.left + relativeX * after.width - clientX;
+  stage.scrollTop += after.top + relativeY * after.height - clientY;
   blueBgStatus(`画布缩放 ${Math.round(blueBgState.zoom * 100)}% · 共 ${blueBgState.layers.length} 张图片`);
 }
 
 function blueBgWheel(event) {
-  if (!blueBgState.background || !event.ctrlKey) return;
+  if (!blueBgState.canvasWidth || !event.ctrlKey) return;
   event.preventDefault();
-  setBlueBgZoomAtPoint(blueBgState.zoom * Math.exp(-event.deltaY * 0.006), event.clientX, event.clientY);
+  setBlueBgZoomAtPoint(blueBgState.zoom * Math.exp(-event.deltaY * 0.01), event.clientX, event.clientY);
 }
 
 function blueBgGestureStart(event) {
-  if (!blueBgState.background) return;
+  if (!blueBgState.canvasWidth) return;
   event.preventDefault();
   blueBgState.gestureStartZoom = blueBgState.zoom;
 }
 
 function blueBgGestureChange(event) {
-  if (!blueBgState.background) return;
+  if (!blueBgState.canvasWidth) return;
   event.preventDefault();
   setBlueBgZoomAtPoint(blueBgState.gestureStartZoom * event.scale, event.clientX, event.clientY);
 }
@@ -1294,13 +1395,73 @@ function loadImageSource(source) {
   });
 }
 
-async function ensureBlueBgBackground() {
-  if (!blueBgState.background) {
-    blueBgState.background = await loadImageSource(BLUE_BG_ASSET_URL);
-  }
+function bgAspectRatioForMode(mode = blueBgState.aspectMode) {
+  if (mode === "blue") return 2000 / 1083;
+  if (mode === "default") return blueBgState.defaultAspect || 2000 / 1083;
+  const preset = Object.values(BG_ASPECTS).find(item => item.value === mode);
+  return preset?.ratio || 2000 / 1083;
+}
+
+function setUnifiedBgCanvasSize(width, height) {
   const canvas = blueBgCanvas();
-  canvas.width = blueBgState.background.naturalWidth;
-  canvas.height = blueBgState.background.naturalHeight;
+  blueBgState.canvasWidth = Math.max(320, Math.round(width));
+  blueBgState.canvasHeight = Math.max(240, Math.round(height));
+  canvas.width = blueBgState.canvasWidth;
+  canvas.height = blueBgState.canvasHeight;
+  const stage = $("#blueBgStage");
+  // 画布区保持与标注/编辑模块相同的固定工作区外观；真正的画布比例
+  // 由 canvas 自身尺寸决定，不能把比例写到外层工作区上。
+  if (stage) stage.style.removeProperty("aspect-ratio");
+}
+
+function updateUnifiedBgCanvasSize(firstImage = null) {
+  if (blueBgState.aspectMode === "default" && firstImage) {
+    const sourceWidth = firstImage.naturalWidth || 1;
+    const sourceHeight = firstImage.naturalHeight || 1;
+    const normalizedScale = IMAGE_EXPORT_WIDTH / Math.max(sourceWidth, sourceHeight);
+    const normalizedWidth = sourceWidth * normalizedScale;
+    const normalizedHeight = sourceHeight * normalizedScale;
+    const shortSide = Math.min(normalizedWidth, normalizedHeight);
+    const shadowOutset = Math.max(8, Math.min(50, Math.round(shortSide / 33))) * 2;
+    const sourceWithShadow = {
+      width: normalizedWidth + shadowOutset,
+      height: normalizedHeight + shadowOutset,
+    };
+    const scaleRatio = 0.9;
+    const aspect = sourceWithShadow.width / sourceWithShadow.height;
+    const compensation = Math.min(Math.abs(aspect - 1), 1) * 0.15;
+    let width = sourceWithShadow.width / scaleRatio;
+    let height = sourceWithShadow.height / scaleRatio;
+    if (aspect < 1) height *= 1 - compensation;
+    if (aspect > 1) width *= 1 - compensation;
+    const marginX = Math.max(40, Math.round(sourceWithShadow.width * 0.035));
+    const marginY = Math.max(32, Math.round(sourceWithShadow.height * 0.035));
+    width = Math.max(width, sourceWithShadow.width + marginX * 2);
+    height = Math.max(height, sourceWithShadow.height + marginY * 2);
+    blueBgState.defaultAspect = width / height;
+  }
+  const ratio = bgAspectRatioForMode();
+  setUnifiedBgCanvasSize(2000, 2000 / ratio);
+}
+
+async function ensureUnifiedBgBackground(firstImage = null) {
+  updateUnifiedBgCanvasSize(firstImage);
+  if (blueBgState.backgroundType === "wallpaper" && !blueBgState.backgroundImage) {
+    const wallpaper = MACOS_WALLPAPERS.find(item => item.id === blueBgState.backgroundImageName) || MACOS_WALLPAPERS[0];
+    blueBgState.backgroundImage = await loadImageSource(wallpaper.url);
+    blueBgState.backgroundImageName = wallpaper.id;
+    blueBgState.backgroundImageUrl = wallpaper.url;
+  }
+  if (blueBgState.backgroundType === "image" && !blueBgState.backgroundImage && blueBgState.backgroundImageUrl) {
+    blueBgState.backgroundImage = await loadImageSource(blueBgState.backgroundImageUrl);
+  }
+  if (blueBgState.backgroundType === "lizhi") {
+    if (!blueBgState.headerImage) blueBgState.headerImage = await loadImageSource("./assets/IMG_header.png");
+    if (!blueBgState.footerImage) blueBgState.footerImage = await loadImageSource("./assets/IMG_footer.png");
+  }
+  blueBgState.background = blueBgState.backgroundImage;
+  blueBgCanvas().width = blueBgState.canvasWidth;
+  blueBgCanvas().height = blueBgState.canvasHeight;
 }
 
 async function loadBlueBgFile(file) {
@@ -1311,146 +1472,6 @@ async function loadBlueBgFile(file) {
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-function loadBgDecorAssets() {
-  if (!bgDecorAssetsPromise) {
-    bgDecorAssetsPromise = Promise.all([
-      loadImageSource(BG_HEADER_ASSET_URL),
-      loadImageSource(BG_FOOTER_ASSET_URL),
-    ]);
-  }
-  return bgDecorAssetsPromise;
-}
-
-function canvasToPngBlob(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => {
-      if (blob) resolve(blob);
-      else reject(new Error("浏览器无法生成 PNG，请换一张图片重试。"));
-    }, "image/png");
-  });
-}
-
-function detectClientBgMode(ctx, width, height) {
-  const pixels = ctx.getImageData(0, 0, width, height).data;
-  const step = Math.max(1, Math.round(Math.min(width, height) / 180));
-  const border = Math.max(step, Math.round(Math.min(width, height) * 0.015));
-  let sampled = 0;
-  let transparent = 0;
-  let edgeOpaque = 0;
-  let edgeWhite = 0;
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
-      const offset = (y * width + x) * 4;
-      const alpha = pixels[offset + 3];
-      sampled += 1;
-      if (alpha < 245) transparent += 1;
-      const edge = x < border || y < border || x >= width - border || y >= height - border;
-      if (!edge || alpha < 245) continue;
-      edgeOpaque += 1;
-      const red = pixels[offset];
-      const green = pixels[offset + 1];
-      const blue = pixels[offset + 2];
-      const luminance = red * 0.299 + green * 0.587 + blue * 0.114;
-      const saturation = Math.max(red, green, blue) - Math.min(red, green, blue);
-      if ((red >= 245 && green >= 245 && blue >= 245) || (luminance >= 235 && saturation <= 18)) {
-        edgeWhite += 1;
-      }
-    }
-  }
-  if (sampled && transparent / sampled >= 0.03) return "transparent";
-  if (edgeOpaque && edgeWhite / edgeOpaque >= 0.4) return "white-edge";
-  return "manual";
-}
-
-function bgCanvasDimensions(width, height, scalePercent) {
-  const scaleRatio = Math.min(scalePercent, 100) / 100;
-  const aspect = width / height;
-  const compensation = Math.min(Math.abs(aspect - 1), 1) * 0.15;
-  let canvasWidth;
-  let canvasHeight;
-  if (aspect < 1) {
-    canvasWidth = Math.round(width / scaleRatio);
-    canvasHeight = Math.round(height / scaleRatio * (1 - compensation));
-  } else if (aspect > 1) {
-    canvasWidth = Math.round(width / scaleRatio * (1 - compensation));
-    canvasHeight = Math.round(height / scaleRatio);
-  } else {
-    canvasWidth = Math.round(width / scaleRatio);
-    canvasHeight = Math.round(height / scaleRatio);
-  }
-  const tightness = scalePercent > 100 ? Math.min((scalePercent - 100) / 50, 1) : 0;
-  const marginRatio = scalePercent > 100 ? Math.max(0.01, 0.035 * (1 - tightness)) : 0.035;
-  const minXMargin = scalePercent > 100 ? Math.max(8, Math.round(width * marginRatio)) : Math.max(40, Math.round(width * marginRatio));
-  const minYMargin = scalePercent > 100 ? Math.max(6, Math.round(height * marginRatio)) : Math.max(32, Math.round(height * marginRatio));
-  return {
-    width: Math.max(canvasWidth, width + minXMargin * 2),
-    height: Math.max(canvasHeight, height + minYMargin * 2),
-  };
-}
-
-async function renderBgInBrowser(file, scalePercent, withShadow, withRound, signal) {
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  const [{ image }, [header, footer]] = await Promise.all([
-    loadBlueBgFile(file),
-    loadBgDecorAssets(),
-  ]);
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-
-  const workingScale = IMAGE_EXPORT_WIDTH / Math.max(image.naturalWidth, image.naturalHeight);
-  const foregroundScale = Math.max(1, Number(scalePercent) / 100);
-  const sourceWidth = Math.max(1, Math.round(image.naturalWidth * workingScale * foregroundScale));
-  const sourceHeight = Math.max(1, Math.round(image.naturalHeight * workingScale * foregroundScale));
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = sourceWidth;
-  sourceCanvas.height = sourceHeight;
-  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  sourceCtx.imageSmoothingEnabled = true;
-  sourceCtx.imageSmoothingQuality = "high";
-  sourceCtx.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-  const mode = detectClientBgMode(sourceCtx, sourceWidth, sourceHeight);
-
-  const sigma = Math.max(2, Math.min(50, Math.round(Math.min(sourceWidth, sourceHeight) / 33)));
-  const pad = withShadow ? Math.max(8, sigma * 2) : 0;
-  const preliminary = bgCanvasDimensions(sourceWidth + pad * 2, sourceHeight + pad * 2, Number(scalePercent));
-  const cornerRadius = Math.max(1, Math.round(SYSTEM_CORNER_RADIUS * preliminary.width / IMAGE_EXPORT_WIDTH));
-  const foreground = document.createElement("canvas");
-  foreground.width = sourceWidth + pad * 2;
-  foreground.height = sourceHeight + pad * 2;
-  const foregroundCtx = foreground.getContext("2d");
-  if (withShadow) {
-    foregroundCtx.save();
-    foregroundCtx.shadowColor = "rgba(0, 0, 0, .25)";
-    foregroundCtx.shadowBlur = sigma * 2;
-    foregroundCtx.fillStyle = "rgba(255, 255, 255, 1)";
-    continuousRoundedRect(foregroundCtx, pad, pad, sourceWidth, sourceHeight, withRound ? cornerRadius : 0);
-    foregroundCtx.fill();
-    foregroundCtx.restore();
-  }
-  foregroundCtx.save();
-  continuousRoundedRect(foregroundCtx, pad, pad, sourceWidth, sourceHeight, withRound ? cornerRadius : 0);
-  foregroundCtx.clip();
-  foregroundCtx.drawImage(sourceCanvas, pad, pad);
-  foregroundCtx.restore();
-
-  const dimensions = bgCanvasDimensions(foreground.width, foreground.height, Number(scalePercent));
-  const canvas = document.createElement("canvas");
-  canvas.width = dimensions.width;
-  canvas.height = dimensions.height;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#8cc6ff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  const headerHeight = Math.round(header.naturalHeight * canvas.width / header.naturalWidth);
-  const footerHeight = Math.round(footer.naturalHeight * canvas.width / footer.naturalWidth);
-  ctx.drawImage(header, 0, 0, canvas.width, headerHeight);
-  ctx.drawImage(footer, 0, canvas.height - footerHeight, canvas.width, footerHeight);
-  ctx.drawImage(foreground, Math.floor((canvas.width - foreground.width) / 2), Math.floor((canvas.height - foreground.height) / 2));
-
-  const output = canvasScaledToWidth(canvas);
-  const blob = await canvasToPngBlob(output);
-  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-  return { blob, mode, appliedShadow: withShadow, appliedRound: withRound };
 }
 
 function continuousRoundedRect(ctx, x, y, width, height, radius) {
@@ -1478,29 +1499,111 @@ function continuousRoundedRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function detectImageCornerRadius(image) {
+  if (!image?.naturalWidth || !image?.naturalHeight) return 0;
+  const sampleScale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+  const width = Math.max(8, Math.round(image.naturalWidth * sampleScale));
+  const height = Math.max(8, Math.round(image.naturalHeight * sampleScale));
+  const sample = document.createElement("canvas");
+  sample.width = width;
+  sample.height = height;
+  const ctx = sample.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0, width, height);
+  const pixels = ctx.getImageData(0, 0, width, height).data;
+  const alphaAt = (x, y) => pixels[(y * width + x) * 4 + 3];
+  const scans = [];
+  [
+    [0, 1, 0, 1],
+    [width - 1, -1, 0, 1],
+    [0, 1, height - 1, -1],
+    [width - 1, -1, height - 1, -1],
+  ].forEach(([xStart, xStep, yStart, yStep]) => {
+    const limit = Math.floor(Math.min(width, height) / 2);
+    let horizontal = null;
+    let vertical = null;
+    for (let index = 0; index < limit; index += 1) {
+      if (horizontal === null && alphaAt(xStart + xStep * index, yStart) >= 16) horizontal = index;
+      if (vertical === null && alphaAt(xStart, yStart + yStep * index) >= 16) vertical = index;
+      if (horizontal !== null && vertical !== null) break;
+    }
+    if (horizontal !== null && vertical !== null) scans.push(Math.max(horizontal, vertical));
+  });
+  if (scans.length < 3) return 0;
+  scans.sort((a, b) => a - b);
+  const edgeExtent = scans[Math.floor(scans.length / 2)];
+  if (edgeExtent < 4) return 0;
+  return Math.max(1, Math.round(edgeExtent / CONTINUOUS_CORNER_EXTENT / sampleScale));
+}
+
 function drawBlueBgLayer(ctx, layer) {
-  const radius = layer.round ? Math.min(SYSTEM_CORNER_RADIUS, layer.width / 2, layer.height / 2) : 0;
+  const storedRadius = Number(layer.cornerRadius);
+  const requestedRadius = Number.isFinite(storedRadius) ? storedRadius : SYSTEM_CORNER_RADIUS;
+  const preserveTransparentCorners = layer.round && layer.cornerAuto !== false && layer.hasTransparentCorners;
+  const shouldClipRound = layer.round && !preserveTransparentCorners;
+  const radius = shouldClipRound
+    ? Math.min(Math.max(0, requestedRadius), layer.width / 2, layer.height / 2)
+    : 0;
   if (layer.shadow) {
+    const sigma = blueBgShadowSigma(layer);
+    const surface = blueBgLayerSurface(layer, shouldClipRound, radius, sigma * 2);
     ctx.save();
-    ctx.shadowColor = "rgba(15, 23, 42, .28)";
-    ctx.shadowBlur = BLUE_BG_SHADOW_BLUR;
-    ctx.shadowOffsetY = BLUE_BG_SHADOW_OFFSET_Y;
-    ctx.fillStyle = "rgba(255, 255, 255, .96)";
-    continuousRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
-    ctx.fill();
+    ctx.shadowColor = "rgba(0, 0, 0, .25)";
+    ctx.shadowBlur = sigma;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.drawImage(surface.canvas, layer.x - surface.padding, layer.y - surface.padding);
     ctx.restore();
   }
-  ctx.save();
-  continuousRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
-  ctx.clip();
-  ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
-  ctx.restore();
+  if (shouldClipRound) {
+    ctx.save();
+    continuousRoundedRect(ctx, layer.x, layer.y, layer.width, layer.height, radius);
+    ctx.clip();
+    ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
+    ctx.restore();
+  } else {
+    ctx.drawImage(layer.image, layer.x, layer.y, layer.width, layer.height);
+  }
+}
+
+function blueBgShadowSigma(layer) {
+  return Math.max(2, Math.min(50, Math.round(Math.min(layer.width, layer.height) / 33)));
+}
+
+function blueBgLayerSurface(layer, shouldClipRound, radius, padding) {
+  const width = Math.max(1, Math.ceil(layer.width));
+  const height = Math.max(1, Math.ceil(layer.height));
+  const inset = Math.ceil(padding);
+  const cacheKey = `${width}:${height}:${shouldClipRound ? Math.round(radius * 100) : 0}:${inset}`;
+  const cached = blueBgLayerSurfaceCache.get(layer);
+  if (cached?.key === cacheKey && cached.image === layer.image) return cached.surface;
+  const canvas = document.createElement("canvas");
+  canvas.width = width + inset * 2;
+  canvas.height = height + inset * 2;
+  const surfaceCtx = canvas.getContext("2d");
+  if (shouldClipRound) {
+    continuousRoundedRect(surfaceCtx, inset, inset, width, height, radius);
+    surfaceCtx.clip();
+  }
+  surfaceCtx.drawImage(layer.image, inset, inset, width, height);
+  const surface = { canvas, padding: inset };
+  blueBgLayerSurfaceCache.set(layer, { key: cacheKey, image: layer.image, surface });
+  return surface;
 }
 
 function blueBgLayerVisualGeometry(layer) {
+  const shadowOutset = layer.shadow ? blueBgShadowSigma(layer) * 2 : 0;
+  const left = shadowOutset;
+  const right = shadowOutset;
+  const top = shadowOutset;
+  const bottom = shadowOutset;
   return {
-    bounds: { x: layer.x, y: layer.y, width: layer.width, height: layer.height },
-    outsets: { left: 0, right: 0, top: 0, bottom: 0 },
+    bounds: {
+      x: layer.x - left,
+      y: layer.y - top,
+      width: layer.width + left + right,
+      height: layer.height + top + bottom,
+    },
+    outsets: { left, right, top, bottom },
   };
 }
 
@@ -1514,7 +1617,7 @@ function blueBgHandles(layer) {
 }
 
 function renderBlueBgCanvas(forExport = false, targetCanvas = blueBgCanvas()) {
-  if (!blueBgState.background) {
+  if (!blueBgState.canvasWidth || !blueBgState.canvasHeight) {
     if (!forExport) {
       syncCanvasSelectionOverlays(
         $("#blueBgStage"), targetCanvas, $("#blueBgSelectionOverlay"), []
@@ -1522,20 +1625,100 @@ function renderBlueBgCanvas(forExport = false, targetCanvas = blueBgCanvas()) {
     }
     return;
   }
-  targetCanvas.width = blueBgState.background.naturalWidth;
-  targetCanvas.height = blueBgState.background.naturalHeight;
+  targetCanvas.width = blueBgState.canvasWidth;
+  targetCanvas.height = blueBgState.canvasHeight;
   const ctx = targetCanvas.getContext("2d");
   ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-  ctx.drawImage(blueBgState.background, 0, 0, targetCanvas.width, targetCanvas.height);
+  drawUnifiedBackground(ctx, targetCanvas);
   blueBgState.layers.forEach(layer => drawBlueBgLayer(ctx, layer));
-  if (forExport) return;
+  syncBgAnnotationSource(targetCanvas);
+  if (forExport) {
+    withAnnotationState(bgAnnotationState, () => {
+      bgAnnotationState.items.forEach(item => drawAnnotationItem(ctx, item, false));
+    });
+    return;
+  }
   drawCanvasSnapGuides(ctx, targetCanvas, blueBgState.snapGuides);
+  const annotating = blueBgState.toolMode === "annotation";
+  const annotationSelected = bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length > 0;
+  $("#blueBgStage").classList.toggle("is-annotating", annotating);
+  $("#bgAnnotationCanvas").hidden = !blueBgState.layers.length;
+  withAnnotationState(bgAnnotationState, () => renderAnnotationCanvas(annotating || annotationSelected));
   syncCanvasSelectionOverlays(
     $("#blueBgStage"),
     targetCanvas,
     $("#blueBgSelectionOverlay"),
-    blueBgSelectionEntries()
+    annotating ? [] : blueBgSelectionEntries()
   );
+}
+
+function withAnnotationState(state, action) {
+  const previous = annotationState;
+  annotationState = state;
+  try {
+    return action();
+  } finally {
+    annotationState = previous;
+  }
+}
+
+function syncBgAnnotationSource(sourceCanvas = blueBgCanvas()) {
+  if (!sourceCanvas?.width || !sourceCanvas?.height) return;
+  let snapshot = bgAnnotationState.image;
+  if (!(snapshot instanceof HTMLCanvasElement)) snapshot = document.createElement("canvas");
+  snapshot.width = sourceCanvas.width;
+  snapshot.height = sourceCanvas.height;
+  snapshot.getContext("2d").drawImage(sourceCanvas, 0, 0);
+  bgAnnotationState.image = snapshot;
+  const overlay = $("#bgAnnotationCanvas");
+  overlay.width = sourceCanvas.width;
+  overlay.height = sourceCanvas.height;
+  if (sourceCanvas === blueBgCanvas()) {
+    overlay.style.width = sourceCanvas.style.width;
+    overlay.style.height = sourceCanvas.style.height;
+    overlay.style.maxWidth = sourceCanvas.style.maxWidth;
+    overlay.style.maxHeight = sourceCanvas.style.maxHeight;
+  }
+}
+
+function clearBgAnnotationSelection() {
+  bgAnnotationState.selectedId = null;
+  bgAnnotationState.selectedIds = [];
+  bgAnnotationState.selectedPart = null;
+  bgAnnotationState.interaction = null;
+  bgAnnotationState.snapGuides = emptySnapGuides();
+  syncCanvasSelectionOverlays(
+    $("#blueBgStage"), $("#bgAnnotationCanvas"), $("#bgAnnotationSelectionOverlay"), []
+  );
+}
+
+function clearBlueBgSelection() {
+  blueBgState.selectedId = null;
+  blueBgState.selectedIds = [];
+  blueBgState.interaction = null;
+  blueBgState.snapGuides = emptySnapGuides();
+  syncCanvasSelectionOverlays(
+    $("#blueBgStage"), blueBgCanvas(), $("#blueBgSelectionOverlay"), []
+  );
+}
+
+function clearAllBgCanvasSelections() {
+  clearBlueBgSelection();
+  clearBgAnnotationSelection();
+}
+
+function activateBgAnnotationMode(mode) {
+  if (!blueBgState.layers.length) return;
+  annotationState = bgAnnotationState;
+  syncBgAnnotationSource();
+  blueBgState.selectedId = null;
+  blueBgState.selectedIds = [];
+  blueBgState.interaction = null;
+  blueBgState.snapGuides = emptySnapGuides();
+  blueBgState.toolMode = "annotation";
+  setBgInspectorMode("annotation");
+  setAnnotationMode(mode);
+  renderBlueBgCanvas();
 }
 
 function selectedBlueBgLayer() {
@@ -1549,6 +1732,29 @@ function selectedBlueBgLayers() {
   return blueBgState.layers.filter(layer => ids.has(layer.id));
 }
 
+async function selectUnifiedBgMaterial(index, additive = false) {
+  const material = bgMaterials[index];
+  if (!material) return;
+  let layer = blueBgState.layers.find(item => item.materialIndex === index);
+  if (!layer && blueBgState.layers.length < BLUE_BG_MAX_LAYERS) {
+    await addBlueBgFiles([material.file]);
+    layer = blueBgState.layers.find(item => item.materialIndex === index);
+  }
+  if (!layer) return;
+  annotationState = bgAnnotationState;
+  clearBgAnnotationSelection();
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
+  const ids = new Set(additive ? selectedBlueBgLayers().map(item => item.id) : []);
+  if (additive && ids.has(layer.id)) ids.delete(layer.id);
+  else ids.add(layer.id);
+  blueBgState.selectedIds = [...ids];
+  blueBgState.selectedId = layer.id;
+  material.unused = false;
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+}
+
 function blueBgSelectionBounds() {
   return unionBounds(selectedBlueBgLayers().map(layer => blueBgLayerVisualGeometry(layer).bounds));
 }
@@ -1557,6 +1763,237 @@ function blueBgSelectionEntries() {
   return selectedBlueBgLayers()
     .map(layer => ({ id: layer.id, bounds: blueBgLayerVisualGeometry(layer).bounds }))
     .sort((a, b) => Number(b.id === blueBgState.selectedId) - Number(a.id === blueBgState.selectedId));
+}
+
+function drawCoverImage(ctx, image, width, height) {
+  if (!image?.naturalWidth || !image?.naturalHeight) return;
+  const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+  const drawWidth = image.naturalWidth * scale;
+  const drawHeight = image.naturalHeight * scale;
+  ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+}
+
+function drawUnifiedBackground(ctx, canvas) {
+  const width = canvas.width;
+  const height = canvas.height;
+  const type = blueBgState.backgroundType;
+  if (type === "image" || type === "wallpaper") {
+    ctx.fillStyle = "#eaf0f6";
+    ctx.fillRect(0, 0, width, height);
+    drawCoverImage(ctx, blueBgState.backgroundImage, width, height);
+    return;
+  }
+  if (type === "gradient") {
+    const preset = BG_GRADIENT_PRESETS.find(item => item.id === blueBgState.backgroundGradient) || BG_GRADIENT_PRESETS[0];
+    const angle = (preset.angle || 135) * Math.PI / 180;
+    const length = Math.abs(width * Math.cos(angle)) + Math.abs(height * Math.sin(angle));
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const x = Math.cos(angle) * length / 2;
+    const y = Math.sin(angle) * length / 2;
+    const gradient = ctx.createLinearGradient(centerX - x, centerY - y, centerX + x, centerY + y);
+    gradient.addColorStop(0, preset.from);
+    gradient.addColorStop(1, preset.to);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  if (type === "lizhi") {
+    // 荔图默认背景沿用原始自动加底的浅蓝底色。这里不能复用
+    // “纯色”的默认蓝色，否则页眉、页脚之间会露出一条深蓝色带。
+    ctx.fillStyle = LIZHI_DEFAULT_COLOR;
+    ctx.fillRect(0, 0, width, height);
+    if (blueBgState.footerImage) {
+      const footerHeight = blueBgState.footerImage.naturalHeight * width / blueBgState.footerImage.naturalWidth;
+      ctx.drawImage(blueBgState.footerImage, 0, height - footerHeight, width, footerHeight);
+    }
+    if (blueBgState.headerImage) {
+      const headerHeight = blueBgState.headerImage.naturalHeight * width / blueBgState.headerImage.naturalWidth;
+      ctx.drawImage(blueBgState.headerImage, 0, 0, width, headerHeight);
+    }
+    return;
+  }
+  if (type === "blue") {
+    ctx.fillStyle = BG_DEFAULT_COLOR;
+    ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  ctx.fillStyle = blueBgState.backgroundColor || BG_DEFAULT_COLOR;
+  ctx.fillRect(0, 0, width, height);
+}
+
+function renderBgWallpaperChoices() {
+  const wrap = $("#bgWallpaperChoices");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  MACOS_WALLPAPERS.forEach(wallpaper => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "bg-background-tile";
+    button.dataset.bgType = "wallpaper";
+    button.dataset.bgWallpaper = wallpaper.id;
+    button.innerHTML = `<span class="bg-background-tile-preview"><img src="${wallpaper.url}" alt=""></span><strong>${wallpaper.label.replace("macOS ", "")}</strong>`;
+    button.title = `${wallpaper.label} · 来源：${wallpaper.source}`;
+    wrap.appendChild(button);
+  });
+  const customButton = document.createElement("button");
+  customButton.type = "button";
+  customButton.className = "bg-background-tile";
+  customButton.dataset.bgType = "image";
+  customButton.dataset.bgCustom = "true";
+  customButton.title = "上传自定义背景图片";
+  customButton.innerHTML = '<span class="bg-background-tile-preview bg-background-add-preview">＋</span><strong>自定义</strong>';
+  wrap.appendChild(customButton);
+}
+
+function syncBgBackgroundTileSelection() {
+  const type = $("#bgBackgroundType").value || blueBgState.backgroundType;
+  const gradient = $("#bgBackgroundGradient").value || blueBgState.backgroundGradient;
+  const wallpaper = $("#bgWallpaperSelect").value || blueBgState.backgroundImageName;
+  $$("[data-bg-type]", $("#bgBackgroundDialog")).forEach(tile => {
+    const active = tile.dataset.bgType === type &&
+      (type !== "gradient" || tile.dataset.bgGradient === gradient) &&
+      (type !== "wallpaper" || tile.dataset.bgWallpaper === wallpaper);
+    tile.classList.toggle("active", active);
+  });
+  $$("[data-bg-aspect]", $("#bgBackgroundDialog")).forEach(tile => {
+    tile.classList.toggle("active", tile.dataset.bgAspect === $("#bgCanvasAspect").value);
+  });
+  $("#bgSolidTilePreview").style.background = $("#bgBackgroundColor").value || BG_DEFAULT_COLOR;
+}
+
+function setBgInspectorMode(mode) {
+  blueBgState.inspectorMode = ["background", "annotation"].includes(mode) ? mode : "effects";
+  const backgroundActive = blueBgState.inspectorMode === "background";
+  const annotationActive = blueBgState.inspectorMode === "annotation";
+  $("#bgBackgroundDialog").hidden = !backgroundActive;
+  $("#bgEffectToolbar").hidden = backgroundActive || annotationActive;
+  $("#bgAnnotationInspector").hidden = !annotationActive;
+  $("#bgBackgroundButton").classList.toggle("active", backgroundActive);
+  $("#bgViewMode").classList.toggle("active", blueBgState.toolMode === "move" && blueBgState.layers.length > 0);
+}
+
+function openBgBackgroundDialog() {
+  const panel = $("#bgBackgroundDialog");
+  if (!panel) return;
+  $("#bgBackgroundType").value = blueBgState.backgroundType;
+  $("#bgBackgroundColor").value = localStorage.getItem(BG_CUSTOM_COLOR_KEY) || blueBgState.backgroundColor || BG_DEFAULT_COLOR;
+  $("#bgBackgroundGradient").value = blueBgState.backgroundGradient || BG_GRADIENT_PRESETS[0].id;
+  $("#bgCanvasAspect").value = blueBgState.aspectMode || "default";
+  renderBgWallpaperChoices();
+  const wallpaper = MACOS_WALLPAPERS.find(item => item.id === blueBgState.backgroundImageName) || MACOS_WALLPAPERS[0];
+  $("#bgWallpaperSelect").value = wallpaper.id;
+  const feedback = $("#bgBackgroundFeedback");
+  feedback.textContent = "";
+  feedback.hidden = true;
+  syncBgBackgroundTileSelection();
+  blueBgState.selectedId = null;
+  blueBgState.selectedIds = [];
+  blueBgState.interaction = null;
+  blueBgState.snapGuides = emptySnapGuides();
+  blueBgState.toolMode = "background";
+  clearBgAnnotationSelection();
+  setBgInspectorMode("background");
+  renderBlueBgCanvas();
+  updateBlueBgControls();
+}
+
+function closeBgBackgroundPanel() {
+  blueBgState.toolMode = "move";
+  clearBgAnnotationSelection();
+  setBgInspectorMode("effects");
+  $("#blueBgStage").classList.remove("is-annotating");
+}
+
+async function applyBgBackgroundFromTiles() {
+  const panel = $("#bgBackgroundDialog");
+  const feedback = $("#bgBackgroundFeedback");
+  feedback.textContent = "";
+  feedback.hidden = true;
+  panel.classList.add("is-applying");
+  syncBgBackgroundTileSelection();
+  try {
+    await applyBgBackgroundSettings();
+    syncBgBackgroundTileSelection();
+  } catch (error) {
+    feedback.textContent = error.message;
+    feedback.hidden = false;
+    blueBgStatus(error.message);
+  } finally {
+    panel.classList.remove("is-applying");
+  }
+}
+
+async function applyBgBackgroundSettings() {
+  const type = $("#bgBackgroundType").value;
+  const aspectMode = $("#bgCanvasAspect").value;
+  const materialValue = $("#bgBackgroundMaterial").value;
+  const selectedMaterialIndex = materialValue === "" ? -1 : Number(materialValue);
+  const previousCanvasWidth = blueBgState.canvasWidth;
+  const previousCanvasHeight = blueBgState.canvasHeight;
+  blueBgState.backgroundType = type;
+  blueBgState.aspectMode = aspectMode;
+  blueBgState.backgroundColor = $("#bgBackgroundColor").value || BG_DEFAULT_COLOR;
+  if (type === "solid") localStorage.setItem(BG_CUSTOM_COLOR_KEY, blueBgState.backgroundColor);
+  blueBgState.backgroundGradient = $("#bgBackgroundGradient").value || BG_GRADIENT_PRESETS[0].id;
+  if (type === "wallpaper") {
+    const wallpaper = MACOS_WALLPAPERS.find(item => item.id === $("#bgWallpaperSelect").value) || MACOS_WALLPAPERS[0];
+    blueBgState.backgroundImage = await loadImageSource(wallpaper.url);
+    blueBgState.backgroundImageName = wallpaper.id;
+    blueBgState.backgroundImageUrl = wallpaper.url;
+  } else if (type === "image") {
+    const file = $("#bgBackgroundFile").files?.[0];
+    if (file) {
+      blueBgState.backgroundImageUrl = URL.createObjectURL(file);
+      blueBgState.backgroundImageName = file.name;
+      blueBgState.backgroundImage = await loadImageSource(blueBgState.backgroundImageUrl);
+    } else if (Number.isInteger(selectedMaterialIndex) && selectedMaterialIndex >= 0 && bgMaterials[selectedMaterialIndex]) {
+      const material = bgMaterials[selectedMaterialIndex];
+      blueBgState.backgroundImageUrl = material.previewUrl;
+      blueBgState.backgroundImageName = material.file.name;
+      blueBgState.backgroundImage = await loadImageSource(material.previewUrl);
+    } else if (!blueBgState.backgroundImage) {
+      throw new Error("请选择一个自定义图片或素材库图片。");
+    }
+  } else {
+    blueBgState.backgroundImage = null;
+    blueBgState.backgroundImageUrl = "";
+    blueBgState.backgroundImageName = "";
+  }
+  await ensureUnifiedBgBackground(blueBgState.layers[0]?.image || null);
+  if (previousCanvasWidth && previousCanvasHeight &&
+      (previousCanvasWidth !== blueBgState.canvasWidth || previousCanvasHeight !== blueBgState.canvasHeight)) {
+    blueBgState.layers.forEach(layer => {
+      const centerRatioX = (layer.x + layer.width / 2) / previousCanvasWidth;
+      const centerRatioY = (layer.y + layer.height / 2) / previousCanvasHeight;
+      // 导出宽度固定为 2000px。切换画布比例时只按相对中心重新定位，
+      // 不允许横纵分别缩放前景图，否则图片和圆角都会被拉伸。
+      const uniformScale = blueBgState.canvasWidth / previousCanvasWidth;
+      layer.width *= uniformScale;
+      layer.height *= uniformScale;
+      layer.fitWidth *= uniformScale;
+      layer.fitHeight *= uniformScale;
+      layer.x = centerRatioX * blueBgState.canvasWidth - layer.width / 2;
+      layer.y = centerRatioY * blueBgState.canvasHeight - layer.height / 2;
+      clampBlueBgLayer(layer);
+    });
+  }
+  renderBlueBgCanvas();
+  resetBlueBgZoom();
+  pushBgHistory();
+  updateBgControlsAfterBackgroundChange();
+  if (type === "image") $("#bgBackgroundFile").value = "";
+  blueBgStatus(`背景已切换为「${backgroundTypeLabel(type)}」 · 画布 ${blueBgState.canvasWidth} × ${blueBgState.canvasHeight}`);
+}
+
+function backgroundTypeLabel(type) {
+  return { lizhi: "荔枝默认", blue: "蓝色", solid: "自定义颜色", gradient: "渐变色", image: "自定义图片", wallpaper: "macOS 壁纸" }[type] || type;
+}
+
+function updateBgControlsAfterBackgroundChange() {
+  updateBlueBgControls();
+  renderBgMaterialList();
+  updateBgExportState();
 }
 
 function selectedDefaultBgMaterial() {
@@ -1579,12 +2016,17 @@ function syncBgEffectToolbar() {
   const selectedItems = blueprint ? selectedBlueBgLayers() : selectedDefaultBgMaterials();
   const selected = selectedItems[0] || null;
   const disabled = !selected;
+  const canvasZoomDisabled = $("#blueBgEditor").hidden;
   const toolbar = $("#bgEffectToolbar");
-  toolbar.classList.toggle("is-disabled", disabled);
+  toolbar.classList.toggle("is-disabled", disabled && canvasZoomDisabled);
   $("#bgDeleteSelected").disabled = disabled;
   $("#bgEffectShadow").disabled = disabled;
   $("#bgEffectRound").disabled = disabled;
+  $("#bgEffectRoundRadius").disabled = disabled || selectedItems.every(item => !item.round);
   $("#bgEffectScale").disabled = disabled;
+  $("#bgCanvasZoom").disabled = canvasZoomDisabled;
+  $("#bgCanvasZoom").value = String(Math.round(blueBgState.zoom * 100));
+  $("#bgCanvasZoomValue").textContent = `${Math.round(blueBgState.zoom * 100)}%`;
   $("#bgEffectScale").min = blueprint ? "10" : "40";
   $("#bgEffectScale").max = blueprint ? "200" : "150";
   if (selected) {
@@ -1592,6 +2034,10 @@ function syncBgEffectToolbar() {
     $("#bgEffectRound").checked = selected.round;
     $("#bgEffectShadow").indeterminate = selectedItems.some(item => item.shadow !== selected.shadow);
     $("#bgEffectRound").indeterminate = selectedItems.some(item => item.round !== selected.round);
+    const storedRadius = Number(selected.cornerRadius);
+    const radius = Math.max(0, Math.round(Number.isFinite(storedRadius) ? storedRadius : SYSTEM_CORNER_RADIUS));
+    $("#bgEffectRoundRadius").value = String(Math.min(128, radius));
+    $("#bgEffectRoundRadiusValue").textContent = `${radius} px`;
     const scale = blueprint
       ? Math.round(selected.width / selected.fitWidth * 100)
       : selected.scale;
@@ -1602,6 +2048,8 @@ function syncBgEffectToolbar() {
     $("#bgEffectRound").checked = false;
     $("#bgEffectShadow").indeterminate = false;
     $("#bgEffectRound").indeterminate = false;
+    $("#bgEffectRoundRadius").value = String(SYSTEM_CORNER_RADIUS);
+    $("#bgEffectRoundRadiusValue").textContent = `${SYSTEM_CORNER_RADIUS} px`;
     $("#bgEffectScaleValue").textContent = "—";
   }
 }
@@ -1609,7 +2057,13 @@ function syncBgEffectToolbar() {
 function updateBlueBgControls() {
   const selected = selectedBlueBgLayer();
   $("#blueBgStage").classList.toggle("has-layers", blueBgState.layers.length > 0);
-  $("#sendBlueBgToAnnotation").disabled = !blueBgState.layers.length;
+  $("#bgViewMode").disabled = !blueBgState.layers.length;
+  $("#bgViewMode").classList.toggle(
+    "active",
+    blueBgState.layers.length > 0 && blueBgState.inspectorMode !== "background"
+  );
+  $("#bgBackgroundButton").classList.toggle("active", blueBgState.inspectorMode === "background");
+  withAnnotationState(bgAnnotationState, updateBgAnnotationControls);
   syncBgEffectToolbar();
   renderBgMaterialList();
   updateBgExportState();
@@ -1619,6 +2073,13 @@ function clampBlueBgLayer(layer) {
   const canvas = blueBgCanvas();
   layer.width = Math.max(Math.max(80, layer.fitWidth * 0.1), Math.min(layer.fitWidth * 2, layer.width));
   layer.height = Math.max(Math.max(60, layer.fitHeight * 0.1), Math.min(layer.fitHeight * 2, layer.height));
+  const radius = Number(layer.cornerRadius);
+  // 状态中的圆角值是用户设置的画布像素值；绘制时才按当前图层尺寸
+  // 临时限幅，不能在缩小图层后永久改小该设置。
+  layer.cornerRadius = Math.max(0, Math.min(
+    128,
+    Number.isFinite(radius) ? radius : SYSTEM_CORNER_RADIUS
+  ));
   const minVisible = 24;
   layer.x = Math.max(-layer.width + minVisible, Math.min(canvas.width - minVisible, layer.x));
   layer.y = Math.max(-layer.height + minVisible, Math.min(canvas.height - minVisible, layer.y));
@@ -1633,23 +2094,34 @@ async function addBlueBgFiles(fileList, reset = false) {
     blueBgState.selectedIds = [];
     blueBgState.nextId = 1;
     blueBgState.sourceName = files[0].name;
+    bgAnnotationState.items = [];
+    bgAnnotationState.selectedId = null;
+    bgAnnotationState.selectedIds = [];
+    bgAnnotationState.selectedPart = null;
+    bgAnnotationState.nextId = 1;
+    bgAnnotationState.nextNumber = 1;
+    bgAnnotationState.numberSize = ANNOTATION_NUMBER_SIZE;
   }
   const available = BLUE_BG_MAX_LAYERS - blueBgState.layers.length;
   const accepted = files.slice(0, Math.max(0, available));
   for (const file of accepted) {
     const { image, fileName } = await loadBlueBgFile(file);
-    const material = bgMaterials.find(candidate => candidate.file === file);
+    const materialIndex = bgMaterials.findIndex(candidate => candidate.file === file);
+    const material = bgMaterials[materialIndex];
+    if (material) material.unused = false;
     const fit = Math.min(
       blueBgCanvas().width * 0.68 / image.naturalWidth,
       blueBgCanvas().height * 0.72 / image.naturalHeight
     );
     const width = Math.max(80, image.naturalWidth * fit);
     const height = image.naturalHeight * fit;
+    const detectedCornerRadius = detectImageCornerRadius(image);
     const offset = blueBgState.layers.length * 46;
     const layer = {
       id: blueBgState.nextId++,
       image,
       fileName,
+      materialIndex,
       previewUrl: material?.previewUrl || "",
       baseWidth: image.naturalWidth,
       baseHeight: image.naturalHeight,
@@ -1662,6 +2134,12 @@ async function addBlueBgFiles(fileList, reset = false) {
       y: (blueBgCanvas().height - height) / 2 + offset,
       shadow: true,
       round: true,
+      unused: false,
+      // 圆角值使用最终 2000px 画布中的绝对像素，不随素材分辨率或缩放
+      // 反复变化。已有透明圆角由绘制阶段直接保留原始 alpha。
+      cornerRadius: SYSTEM_CORNER_RADIUS,
+      cornerAuto: true,
+      hasTransparentCorners: detectedCornerRadius > 0,
     };
     clampBlueBgLayer(layer);
     blueBgState.layers.push(layer);
@@ -1681,7 +2159,8 @@ async function addBlueBgFiles(fileList, reset = false) {
 
 async function startBlueBgPreview(files) {
   if (!files?.length) throw new Error("请先选择至少一张图片。");
-  await ensureBlueBgBackground();
+  const firstImage = await loadBlueBgFile(files[0]);
+  await ensureUnifiedBgBackground(firstImage.image);
   $("#blueBgEditor").hidden = false;
   await addBlueBgFiles(files, true);
   resetBlueBgZoom();
@@ -1697,22 +2176,71 @@ function blueBgPointerPosition(event) {
 }
 
 function blueBgPointInLayer(layer, point) {
-  const bounds = blueBgLayerVisualGeometry(layer).bounds;
+  const bounds = selectionFrameBounds(
+    blueBgCanvas(),
+    blueBgLayerVisualGeometry(layer).bounds
+  );
   return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
     point.y >= bounds.y && point.y <= bounds.y + bounds.height;
 }
 
 function blueBgHitHandle(layer, point) {
   if (!layer) return null;
-  return hitSelectionHandle(blueBgLayerVisualGeometry(layer).bounds, point, blueBgCanvas(), 14);
+  return hitSelectionHandle(
+    selectionFrameBounds(blueBgCanvas(), blueBgLayerVisualGeometry(layer).bounds),
+    point,
+    blueBgCanvas(),
+    14
+  );
+}
+
+function blueBgAlignmentTargets(excludedIds = []) {
+  const canvas = blueBgCanvas();
+  const excluded = new Set(excludedIds);
+  const x = [0, canvas.width / 2, canvas.width];
+  const y = [0, canvas.height / 2, canvas.height];
+  blueBgState.layers.forEach(layer => {
+    if (excluded.has(layer.id)) return;
+    const bounds = blueBgLayerVisualGeometry(layer).bounds;
+    x.push(bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width);
+    y.push(bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height);
+  });
+  const unique = values => [...new Set(values.map(value => Math.round(value * 1000) / 1000))];
+  return { x: unique(x), y: unique(y) };
+}
+
+function snapBlueBgBounds(bounds, excludedIds = [], tolerancePx = 12) {
+  const canvas = blueBgCanvas();
+  const rect = canvas.getBoundingClientRect();
+  const toleranceX = tolerancePx * canvas.width / Math.max(1, rect.width);
+  const toleranceY = tolerancePx * canvas.height / Math.max(1, rect.height);
+  const targets = blueBgAlignmentTargets(excludedIds);
+  const xEdges = [bounds.x, bounds.x + bounds.width / 2, bounds.x + bounds.width];
+  const yEdges = [bounds.y, bounds.y + bounds.height / 2, bounds.y + bounds.height];
+  const bestMatch = (edges, values, tolerance) => edges
+    .flatMap(edge => values.map(target => ({ target, offset: target - edge, distance: Math.abs(target - edge) })))
+    .filter(match => match.distance <= tolerance)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
+  const xMatch = bestMatch(xEdges, targets.x, toleranceX);
+  const yMatch = bestMatch(yEdges, targets.y, toleranceY);
+  return {
+    x: bounds.x + (xMatch?.offset || 0),
+    y: bounds.y + (yMatch?.offset || 0),
+    guides: {
+      vertical: xMatch ? [xMatch.target] : [],
+      horizontal: yMatch ? [yMatch.target] : [],
+    },
+  };
 }
 
 function blueBgPointerDown(event) {
   if (event.button > 0 || !blueBgState.layers.length) return;
+  if (blueBgState.inspectorMode === "background") closeBgBackgroundPanel();
   const canvas = blueBgCanvas();
   blueBgState.snapGuides = emptySnapGuides();
   const point = blueBgPointerPosition(event);
   const selectedLayers = selectedBlueBgLayers();
+  const hadSelection = selectedLayers.length > 0;
   const layer = [...blueBgState.layers].reverse().find(candidate => blueBgPointInLayer(candidate, point));
   const multiKey = event.metaKey || event.ctrlKey;
   if (multiKey) {
@@ -1728,13 +2256,15 @@ function blueBgPointerDown(event) {
         mode: updatedSelection.length > 1 ? "move-group" : "move",
         id: layer.id,
         start: point,
+        startClient: { x: event.clientX, y: event.clientY },
+        moved: false,
         original: { ...layer },
         originals: updatedSelection.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y })),
       } : null;
     } else {
       blueBgState.interaction = null;
     }
-    canvas.setPointerCapture?.(event.pointerId);
+    $("#blueBgStage").setPointerCapture?.(event.pointerId);
     $("#blueBgStage").focus();
     updateBlueBgControls();
     renderBlueBgCanvas();
@@ -1763,16 +2293,19 @@ function blueBgPointerDown(event) {
       mode: movingSelection && selectedLayers.length > 1 ? "move-group" : "move",
       id: layer.id,
       start: point,
+      startClient: { x: event.clientX, y: event.clientY },
+      moved: false,
       original: { ...layer },
       originals: movingSelection
         ? selectedLayers.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y }))
         : null,
     } : null;
   }
-  canvas.setPointerCapture?.(event.pointerId);
+  $("#blueBgStage").setPointerCapture?.(event.pointerId);
   $("#blueBgStage").focus();
   updateBlueBgControls();
   renderBlueBgCanvas();
+  if (!layer && hadSelection) blueBgStatus("已取消框选。");
   event.preventDefault();
 }
 
@@ -1785,13 +2318,25 @@ function blueBgPointerMove(event) {
       .reverse()
       .map(layer => blueBgHitHandle(layer, point))
       .find(Boolean);
-    blueBgCanvas().style.cursor = selectionCursorByHandle[handle] ||
-      (selectedLayers.some(layer => blueBgPointInLayer(layer, point)) ? "move" : "default");
+    const cursor = selectionCursorByHandle[handle] ||
+      (blueBgState.layers.some(layer => blueBgPointInLayer(layer, point)) ? "move" : "default");
+    blueBgCanvas().style.cursor = cursor;
+    $("#blueBgStage").style.cursor = cursor;
     return;
   }
   const layer = blueBgState.layers.find(candidate => candidate.id === interaction.id);
   if (!layer) return;
   const point = blueBgPointerPosition(event);
+  if (["move", "move-group"].includes(interaction.mode) && !interaction.moved) {
+    const distance = Math.hypot(
+      event.clientX - interaction.startClient.x,
+      event.clientY - interaction.startClient.y
+    );
+    // 单击时触控板/鼠标会产生极小的 pointermove。超过 4px 后才进入
+    // 真正拖动，避免“点选一下，图片同时往上跳”。
+    if (distance < 4) return;
+    interaction.moved = true;
+  }
   if (interaction.mode === "move-group") {
     const dx = point.x - interaction.start.x;
     const dy = point.y - interaction.start.y;
@@ -1801,9 +2346,8 @@ function blueBgPointerMove(event) {
       candidate.x = original.x + dx;
       candidate.y = original.y + dy;
     });
-    const canvas = blueBgCanvas();
     const bounds = blueBgSelectionBounds();
-    const snapped = snapBoundsToCanvas(bounds, canvas, 12, true);
+    const snapped = snapBlueBgBounds(bounds, selectedBlueBgLayers().map(candidate => candidate.id));
     const offsetX = snapped.x - bounds.x;
     const offsetY = snapped.y - bounds.y;
     selectedBlueBgLayers().forEach(candidate => {
@@ -1815,9 +2359,8 @@ function blueBgPointerMove(event) {
   } else if (interaction.mode === "move") {
     layer.x = interaction.original.x + point.x - interaction.start.x;
     layer.y = interaction.original.y + point.y - interaction.start.y;
-    const canvas = blueBgCanvas();
     const visualBounds = blueBgLayerVisualGeometry(layer).bounds;
-    const snapped = snapBoundsToCanvas(visualBounds, canvas, 12, true);
+    const snapped = snapBlueBgBounds(visualBounds, [layer.id]);
     layer.x += snapped.x - visualBounds.x;
     layer.y += snapped.y - visualBounds.y;
     blueBgState.snapGuides = snapped.guides;
@@ -1826,16 +2369,30 @@ function blueBgPointerMove(event) {
     const rect = canvas.getBoundingClientRect();
     const toleranceX = 12 * canvas.width / Math.max(1, rect.width);
     const toleranceY = 12 * canvas.height / Math.max(1, rect.height);
+    const frameMargin = canvasDisplayUnit(canvas);
+    const targets = blueBgAlignmentTargets([layer.id]);
+    const visualEdgePoint = {
+      x: interaction.handle.includes("w")
+        ? point.x + frameMargin
+        : interaction.handle.includes("e")
+          ? point.x - frameMargin
+          : point.x,
+      y: interaction.handle.includes("n")
+        ? point.y + frameMargin
+        : interaction.handle.includes("s")
+          ? point.y - frameMargin
+          : point.y,
+    };
     const xSnap = interaction.handle.includes("w") || interaction.handle.includes("e")
-      ? nearestSnap(point.x, [0, canvas.width / 2, canvas.width], toleranceX)
+      ? nearestSnap(visualEdgePoint.x, targets.x, toleranceX)
       : null;
     const ySnap = interaction.handle.includes("n") || interaction.handle.includes("s")
-      ? nearestSnap(point.y, [0, canvas.height / 2, canvas.height], toleranceY)
+      ? nearestSnap(visualEdgePoint.y, targets.y, toleranceY)
       : null;
     const visualGeometry = blueBgLayerVisualGeometry(interaction.original);
     const resizePoint = {
-      x: xSnap?.value ?? point.x,
-      y: ySnap?.value ?? point.y,
+      x: xSnap?.value ?? visualEdgePoint.x,
+      y: ySnap?.value ?? visualEdgePoint.y,
     };
     if (interaction.handle.includes("w")) resizePoint.x += visualGeometry.outsets.left;
     if (interaction.handle.includes("e")) resizePoint.x -= visualGeometry.outsets.right;
@@ -1892,13 +2449,80 @@ function blueBgPointerMove(event) {
 
 function blueBgPointerUp(event) {
   if (!blueBgState.interaction) return;
+  const interaction = blueBgState.interaction;
   blueBgState.interaction = null;
-  blueBgCanvas().releasePointerCapture?.(event.pointerId);
+  $("#blueBgStage").releasePointerCapture?.(event.pointerId);
   const snapped = blueBgState.snapGuides.vertical.length || blueBgState.snapGuides.horizontal.length;
   blueBgState.snapGuides = emptySnapGuides();
   renderBlueBgCanvas();
+  if (["move", "move-group"].includes(interaction.mode) && !interaction.moved) {
+    blueBgStatus(`已选择前景图 · 共 ${blueBgState.layers.length} 张图片`);
+    return;
+  }
   pushBgHistory();
   blueBgStatus(`${snapped ? "已吸附到图像或画布参考线" : "已保存当前调整"} · 共 ${blueBgState.layers.length} 张图片`);
+}
+
+function bgAnnotationHitAtEvent(event) {
+  if (!bgAnnotationState.items.length) return false;
+  return withAnnotationState(bgAnnotationState, () => {
+    const point = annotationPointerPosition(event);
+    const selected = selectedAnnotationItems();
+    const handle = [...selected].reverse().some(item => Boolean(hitAnnotationHandle(item, point)));
+    const item = [...annotationState.items].reverse().some(candidate => pointInAnnotationItem(candidate, point));
+    return handle || item;
+  });
+}
+
+function blueBgLayerHitAtEvent(event) {
+  if (!blueBgState.layers.length) return false;
+  const point = blueBgPointerPosition(event);
+  return selectedBlueBgLayers().some(layer => Boolean(blueBgHitHandle(layer, point))) ||
+    [...blueBgState.layers].reverse().some(layer => blueBgPointInLayer(layer, point));
+}
+
+function blueBgStagePointerDown(event) {
+  if (event.button > 0 || event.target.closest(".blue-bg-context-menu")) return;
+  annotationState = bgAnnotationState;
+  if (blueBgState.toolMode === "annotation" || bgAnnotationHitAtEvent(event)) {
+    blueBgState.selectedId = null;
+    blueBgState.selectedIds = [];
+    blueBgState.interaction = null;
+    syncCanvasSelectionOverlays($("#blueBgStage"), blueBgCanvas(), $("#blueBgSelectionOverlay"), []);
+    if (blueBgState.toolMode !== "annotation") annotationState.mode = "view";
+    setBgInspectorMode("annotation");
+    annotationPointerDown(event);
+    return;
+  }
+  const hadSelection = blueBgState.selectedId !== null || blueBgState.selectedIds.length ||
+    bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length;
+  clearBgAnnotationSelection();
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
+  if (event.target === $("#blueBgStage") && !blueBgLayerHitAtEvent(event)) {
+    clearBlueBgSelection();
+    updateBlueBgControls();
+    renderBlueBgCanvas();
+    $("#blueBgStage").focus();
+    if (hadSelection) blueBgStatus("已取消框选。");
+    return;
+  }
+  blueBgPointerDown(event);
+}
+
+function blueBgStagePointerMove(event) {
+  annotationState = bgAnnotationState;
+  if (bgAnnotationState.interaction || blueBgState.toolMode === "annotation" || bgAnnotationHitAtEvent(event)) {
+    annotationPointerMove(event);
+  } else {
+    blueBgPointerMove(event);
+  }
+}
+
+function blueBgStagePointerUp(event) {
+  annotationState = bgAnnotationState;
+  if (bgAnnotationState.interaction) annotationPointerUp(event);
+  else blueBgPointerUp(event);
 }
 
 function hideBlueBgContextMenu() {
@@ -1943,7 +2567,21 @@ function updateBlueBgLayerOptions() {
     layer.shadow = $("#bgEffectShadow").checked;
     layer.round = $("#bgEffectRound").checked;
   });
+  updateBlueBgControls();
   renderBlueBgCanvas();
+}
+
+function updateBlueBgLayerRadius() {
+  const layers = selectedBlueBgLayers();
+  if (!layers.length) return;
+  const radius = Math.max(0, Math.min(128, Number($("#bgEffectRoundRadius").value) || 0));
+  layers.forEach(layer => {
+    layer.cornerRadius = radius;
+    layer.cornerAuto = false;
+  });
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+  blueBgStatus(`所选图片圆角 ${radius}px · 可继续拖动滑杆调整`);
 }
 
 function updateBlueBgLayerScale() {
@@ -1963,26 +2601,73 @@ function updateBlueBgLayerScale() {
   blueBgStatus(`所选图片缩放比例 ${Math.round(scale * 100)}% · 中心位置保持不变`);
 }
 
-function deleteBlueBgLayer() {
-  const ids = new Set(selectedBlueBgLayers().map(layer => layer.id));
-  if (!ids.size) return;
+function removeSelectedBlueBgLayers() {
+  const deletedLayers = selectedBlueBgLayers();
+  const ids = new Set(deletedLayers.map(layer => layer.id));
+  if (!ids.size) return 0;
   blueBgState.layers = blueBgState.layers.filter(layer => !ids.has(layer.id));
-  blueBgState.selectedId = blueBgState.layers.at(-1)?.id ?? null;
+  const remainingMaterialIndexes = new Set(
+    blueBgState.layers.map(layer => layer.materialIndex).filter(index => Number.isInteger(index))
+  );
+  deletedLayers.forEach(layer => {
+    const index = layer.materialIndex;
+    if (Number.isInteger(index) && !remainingMaterialIndexes.has(index) && bgMaterials[index]) {
+      bgMaterials[index].unused = true;
+      bgMaterials[index].outputBlob = null;
+      if (bgMaterials[index].outputUrl) {
+        URL.revokeObjectURL(bgMaterials[index].outputUrl);
+        bgMaterials[index].outputUrl = "";
+      }
+    }
+  });
+  syncBgGeneratedResults();
+  blueBgState.selectedId = null;
   blueBgState.selectedIds = [];
+  return ids.size;
+}
+
+function deleteBlueBgLayer() {
+  const count = removeSelectedBlueBgLayers();
+  if (!count) return;
   updateBlueBgControls();
   renderBlueBgCanvas();
   pushBgHistory();
-  blueBgStatus(`已删除 ${ids.size} 张所选图片 · 共 ${blueBgState.layers.length} 张图片`);
+  blueBgStatus(`已移除 ${count} 张画布前景图，素材库保留并标记为未使用 · 共 ${blueBgState.layers.length} 张图片`);
+}
+
+function deleteSelectedBgCanvasItems() {
+  annotationState = bgAnnotationState;
+  const annotationIds = new Set(selectedAnnotationItems().map(item => item.id));
+  const layerCount = removeSelectedBlueBgLayers();
+  if (annotationIds.size) {
+    bgAnnotationState.items = bgAnnotationState.items.filter(item => !annotationIds.has(item.id));
+  }
+  if (!layerCount && !annotationIds.size) return false;
+  clearAllBgCanvasSelections();
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+  pushBgHistory();
+  const parts = [];
+  if (layerCount) parts.push(`${layerCount} 张前景图`);
+  if (annotationIds.size) parts.push(`${annotationIds.size} 个标注`);
+  blueBgStatus(`已移除 ${parts.join("和")}；前景素材仍保留在素材库 · 共 ${blueBgState.layers.length} 张图片`);
+  return true;
 }
 
 function blueBgKeyDown(event) {
-  const layers = selectedBlueBgLayers();
-  if (!layers.length) return;
   if (event.key === "Delete" || event.key === "Backspace") {
-    event.preventDefault();
-    deleteBlueBgLayer();
+    if (deleteSelectedBgCanvasItems()) event.preventDefault();
     return;
   }
+  if (blueBgState.toolMode === "annotation" || bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length) {
+    annotationState = bgAnnotationState;
+    annotationKeyDown(event);
+    return;
+  }
+  const layers = selectedBlueBgLayers();
+  if (!layers.length) return;
   const directions = {
     ArrowLeft: [-1, 0],
     ArrowRight: [1, 0],
@@ -2004,7 +2689,7 @@ function blueBgKeyDown(event) {
 
 function blueBgFilename() {
   const baseName = (blueBgState.sourceName || "image").replace(/\.[^.]+$/, "");
-  return `${baseName}-蓝色底图.png`;
+  return `${baseName}-荔图.png`;
 }
 
 function composeBlueBgOutputCanvas() {
@@ -2028,20 +2713,11 @@ function confirmBlueBgRender() {
     bgGeneratedResults = [{ blob, filename }];
     downloadBlob(blob, filename);
     updateBgExportState();
-    blueBgStatus(`已导出 2000 × 1083px 图片。`);
+    blueBgStatus(`已导出 ${output.width} × ${output.height}px 图片。`);
   }, "image/png");
 }
 
 function sendBgToAnnotation() {
-  const blueprint = $("#bgBlueMode").checked;
-  if (!blueprint) {
-    const material = selectedDefaultBgMaterial();
-    if (!material?.outputBlob) return;
-    const file = new File([material.outputBlob], material.filename || `${material.file.name}-加底.png`, { type: "image/png" });
-    showTab("annotation");
-    loadAnnotationImage(file);
-    return;
-  }
   if (!blueBgState.layers.length) return;
   composeBlueBgOutputCanvas().toBlob(blob => {
     if (!blob) {
@@ -2049,52 +2725,24 @@ function sendBgToAnnotation() {
       return;
     }
     const baseName = (blueBgState.sourceName || "image").replace(/\.[^.]+$/, "");
-    const file = new File([blob], `${baseName}-蓝色底图.png`, { type: "image/png" });
+    const file = new File([blob], `${baseName}-荔图.png`, { type: "image/png" });
     showTab("annotation");
     loadAnnotationImage(file);
   }, "image/png");
 }
 
 function toggleBlueBgMode() {
-  const enabled = $("#bgBlueMode").checked;
-  $("#bgModeToggleLabel").textContent = enabled ? "默认模式" : "蓝底模式";
-  $("#bgModeToggleButton").classList.toggle("active", !enabled);
-  $("#bgModeToggleButton").setAttribute("aria-label", enabled ? "切换到默认模式" : "切换到蓝底模式");
-  $("#bgModeToggleButton").title = enabled ? "切换到默认模式" : "切换到蓝底模式";
-  $("#bgPreview").hidden = enabled;
-  $("#blueBgEditor").hidden = !enabled || !blueBgState.layers.length;
+  $("#bgBlueMode").checked = true;
+  $("#bgPreview").hidden = true;
+  $("#blueBgEditor").hidden = !blueBgState.canvasWidth;
   renderBgMaterialList();
-  renderBgPreviewList();
   syncBgEffectToolbar();
   updateBgExportState();
 }
 
 function setBgMode(blueprint) {
-  if (blueprint) {
-    bgMaterials.forEach(material => {
-      if (material.renderTimer) {
-        window.clearTimeout(material.renderTimer);
-        material.renderTimer = null;
-      }
-      bgRenderControllers.get(material)?.abort();
-      material.renderVersion += 1;
-      material.rendering = false;
-    });
-  }
-  $("#bgBlueMode").checked = blueprint;
+  $("#bgBlueMode").checked = true;
   toggleBlueBgMode();
-  if (blueprint && bgMaterials.length && !blueBgState.layers.length) {
-    startBlueBgPreview(bgMaterials.map(material => material.file)).catch(err => alert(err.message));
-  } else if (blueprint && !blueBgState.layers.length) {
-    ensureBlueBgBackground().then(() => {
-      $("#blueBgEditor").hidden = false;
-      renderBlueBgCanvas();
-      resetBlueBgZoom();
-      updateBlueBgControls();
-    }).catch(err => alert(err.message));
-  } else if (!blueprint && bgMaterials.some(material => !material.outputBlob)) {
-    processBgImages().catch(err => alert(err.message));
-  }
 }
 
 function clearBgMaterials() {
@@ -2118,6 +2766,9 @@ function setBgFiles(fileList) {
     scale: 90,
     shadow: true,
     round: true,
+    unused: false,
+    cornerRadius: SYSTEM_CORNER_RADIUS,
+    cornerAuto: true,
     outputBlob: null,
     outputUrl: "",
     outputLabel: "",
@@ -2132,6 +2783,12 @@ function setBgFiles(fileList) {
   blueBgState.layers = [];
   blueBgState.selectedId = null;
   blueBgState.selectedIds = [];
+  bgAnnotationState.items = [];
+  bgAnnotationState.selectedId = null;
+  bgAnnotationState.selectedIds = [];
+  bgAnnotationState.selectedPart = null;
+  bgAnnotationState.nextId = 1;
+  bgAnnotationState.nextNumber = 1;
   resetBgHistory();
   renderBgMaterialList();
   renderBgPreviewList();
@@ -2156,6 +2813,9 @@ async function importBgFiles(fileList) {
       scale: 90,
       shadow: true,
       round: true,
+      unused: false,
+      cornerRadius: SYSTEM_CORNER_RADIUS,
+      cornerAuto: true,
       outputBlob: null,
       outputUrl: "",
       outputLabel: "",
@@ -2164,16 +2824,76 @@ async function importBgFiles(fileList) {
       rendering: false,
       renderTimer: null,
     })));
-    await ensureBlueBgBackground();
+    await ensureUnifiedBgBackground(blueBgState.layers[0]?.image || null);
     await addBlueBgFiles(accepted);
     return;
   }
   setBgFiles(files);
 }
 
+function clipboardImageFiles(event) {
+  const items = Array.from(event.clipboardData?.items || []);
+  return items
+    .filter(item => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item, index) => item.getAsFile?.())
+    .filter(Boolean)
+    .map((file, index) => {
+      if (file.name) return file;
+      const extension = file.type.split("/")[1]?.replace("jpeg", "jpg") || "png";
+      return new File([file], `粘贴图片-${Date.now()}-${index + 1}.${extension}`, { type: file.type });
+    });
+}
+
+async function importClipboardImageIntoActiveModule(event) {
+  const moduleId = activeImageModuleId();
+  if (!moduleId) return false;
+  const target = event.target;
+  if (target?.matches?.(
+    'textarea, select, [contenteditable="true"], input:not([type="file"]):not([type="button"]):not([type="checkbox"])'
+  )) return false;
+  const files = clipboardImageFiles(event);
+  if (!files.length) return false;
+  event.preventDefault();
+  try {
+    if (moduleId === "bg") {
+      if ($("#bgBlueMode").checked) {
+        await importBgFiles(files);
+      } else if (bgMaterials.length) {
+        setBgFiles([...bgMaterials.map(material => material.file), ...files]);
+      } else {
+        setBgFiles(files);
+      }
+      return true;
+    }
+    if (moduleId === "annotation") {
+      loadAnnotationImage(files[0]);
+      return true;
+    }
+    if (moduleId === "imageEditor") {
+      await loadImageEditorFile(files[0]);
+      return true;
+    }
+  } catch (error) {
+    const message = error?.message || "剪贴板图片导入失败，请重试。";
+    if (moduleId === "bg") {
+      if ($("#bgBlueMode").checked) blueBgStatus(message);
+    } else if (moduleId === "annotation") {
+      annotationStatusText(message);
+    } else {
+      imageEditorStatus(message);
+    }
+  }
+  return false;
+}
+
 function openBgMaterialInspector(index) {
   const material = bgMaterials[index];
   if (!material || $("#bgBlueMode").checked) return;
+  if (material.unused) {
+    material.unused = false;
+    material.outputBlob = null;
+    scheduleDefaultBgMaterialRender(index);
+  }
   bgSelectedMaterialIndex = index;
   bgSelectedMaterialIndices = [];
   syncBgEffectToolbar();
@@ -2185,6 +2905,11 @@ function openBgMaterialInspector(index) {
 function toggleDefaultBgMaterialSelection(index) {
   if ($("#bgBlueMode").checked || index < 0 || index >= bgMaterials.length) return;
   const ids = new Set(selectedDefaultBgMaterialIndexes());
+  if (bgMaterials[index].unused) {
+    bgMaterials[index].unused = false;
+    bgMaterials[index].outputBlob = null;
+    scheduleDefaultBgMaterialRender(index);
+  }
   const adding = !ids.has(index);
   if (adding) ids.add(index);
   else ids.delete(index);
@@ -2209,50 +2934,57 @@ function saveBgMaterialInspector() {
     scheduleDefaultBgMaterialRender(index);
   });
   $("#bgEffectScaleValue").textContent = `${scale}%`;
+  syncBgEffectToolbar();
+  syncBgGeneratedResults();
+}
+
+function saveBgMaterialCornerRadius() {
+  const indexes = selectedDefaultBgMaterialIndexes();
+  if (!indexes.length || $("#bgBlueMode").checked) return;
+  const radius = Math.max(0, Math.min(128, Number($("#bgEffectRoundRadius").value) || 0));
+  indexes.forEach(index => {
+    const material = bgMaterials[index];
+    material.cornerRadius = radius;
+    material.cornerAuto = false;
+    material.outputBlob = null;
+    scheduleDefaultBgMaterialRender(index);
+  });
+  $("#bgEffectRoundRadiusValue").textContent = `${radius} px`;
+  syncBgEffectToolbar();
   syncBgGeneratedResults();
 }
 
 function renderBgMaterialList() {
   const wrap = $("#bgMaterialList");
   if (!wrap) return;
+  $("#bgPreview").hidden = true;
   const scroller = wrap.closest(".bg-material-pane");
   const scrollTop = scroller?.scrollTop || 0;
   wrap.innerHTML = "";
-  if ($("#bgBlueMode").checked) {
-    blueBgState.layers.forEach((layer, index) => {
-      const card = document.createElement("div");
-      card.className = `bg-material-card${selectedBlueBgLayers().some(item => item.id === layer.id) ? " active" : ""}`;
-      card.dataset.blueLayerId = String(layer.id);
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      card.setAttribute("aria-label", `选择素材 ${layer.fileName || `图片 ${index + 1}`}`);
-      const preview = document.createElement("div");
-      preview.className = "bg-material-preview";
-      const img = document.createElement("img");
-      img.src = layer.previewUrl;
-      img.alt = "";
-      preview.appendChild(img);
-      card.appendChild(preview);
-      wrap.appendChild(card);
-    });
-  } else {
-    bgMaterials.forEach((material, index) => {
-      const card = document.createElement("div");
-      card.className = `bg-material-card${selectedDefaultBgMaterialIndexes().includes(index) ? " active" : ""}`;
-      card.dataset.bgMaterialIndex = String(index);
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-      card.setAttribute("aria-label", `选择素材 ${material.file.name}`);
-      const img = document.createElement("img");
-      img.src = material.previewUrl;
-      img.alt = "";
-      const preview = document.createElement("div");
-      preview.className = "bg-material-preview";
-      preview.appendChild(img);
-      card.appendChild(preview);
-      wrap.appendChild(card);
-    });
-  }
+  bgMaterials.forEach((material, index) => {
+    const layer = blueBgState.layers.find(item => item.materialIndex === index);
+    const selected = layer && selectedBlueBgLayers().some(item => item.id === layer.id);
+    const card = document.createElement("div");
+    card.className = `bg-material-card${selected ? " active" : ""}${material.unused ? " is-unused" : ""}`;
+    card.dataset.bgMaterialIndex = String(index);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `选择素材 ${material.file.name}${material.unused ? "（未使用）" : ""}`);
+    const preview = document.createElement("div");
+    preview.className = "bg-material-preview";
+    const img = document.createElement("img");
+    img.src = material.previewUrl;
+    img.alt = "";
+    preview.appendChild(img);
+    card.appendChild(preview);
+    if (material.unused) {
+      const badge = document.createElement("span");
+      badge.className = "bg-material-unused-badge";
+      badge.textContent = "未使用";
+      card.appendChild(badge);
+    }
+    wrap.appendChild(card);
+  });
   const importCard = document.createElement("div");
   importCard.className = "bg-material-import-card";
   const importButton = document.createElement("button");
@@ -2260,8 +2992,8 @@ function renderBgMaterialList() {
   importButton.className = "bg-material-import-button canvas-empty-import";
   importButton.dataset.importBgMaterial = "";
   importButton.textContent = "导入图片";
-  importButton.disabled = $("#bgBlueMode").checked && blueBgState.layers.length >= 3;
-  importButton.title = importButton.disabled ? "蓝底模式最多可导入 3 张图片" : "导入图片";
+  importButton.disabled = blueBgState.layers.length >= BLUE_BG_MAX_LAYERS;
+  importButton.title = importButton.disabled ? `最多可导入 ${BLUE_BG_MAX_LAYERS} 张图片` : "导入图片";
   importCard.appendChild(importButton);
   wrap.appendChild(importCard);
   if (scroller) scroller.scrollTop = scrollTop;
@@ -2294,7 +3026,7 @@ function deleteSelectedDefaultBgMaterials() {
 }
 
 function deleteSelectedBgItem() {
-  if ($("#bgBlueMode").checked) deleteBlueBgLayer();
+  if ($("#bgBlueMode").checked) deleteSelectedBgCanvasItems();
   else deleteSelectedDefaultBgMaterials();
 }
 
@@ -2319,11 +3051,7 @@ function batchDownloadBgResults() {
 }
 
 function updateBgExportState() {
-  const blueprint = $("#bgBlueMode").checked;
-  $("#bgExportButton").disabled = blueprint ? !blueBgState.layers.length : !bgGeneratedResults.length;
-  $("#sendBlueBgToAnnotation").disabled = blueprint
-    ? !blueBgState.layers.length
-    : !selectedDefaultBgMaterial()?.outputBlob;
+  $("#bgExportButton").disabled = !blueBgState.layers.length;
   $("#bgUndo").disabled = bgHistoryIndex <= 0;
   $("#bgRedo").disabled = bgHistoryIndex < 0 || bgHistoryIndex >= bgHistory.length - 1;
 }
@@ -2332,10 +3060,33 @@ function captureBgHistoryState() {
   return {
     materials: bgMaterials.map(material => ({ ...material, renderTimer: null })),
     layers: blueBgState.layers.map(layer => ({ ...layer })),
+    background: {
+      type: blueBgState.backgroundType,
+      color: blueBgState.backgroundColor,
+      gradient: blueBgState.backgroundGradient,
+      imageUrl: blueBgState.backgroundImageUrl,
+      imageName: blueBgState.backgroundImageName,
+      aspectMode: blueBgState.aspectMode,
+      defaultAspect: blueBgState.defaultAspect,
+    },
     selectedId: blueBgState.selectedId,
     selectedIds: [...blueBgState.selectedIds],
     selectedMaterialIndex: bgSelectedMaterialIndex,
     selectedMaterialIndices: [...bgSelectedMaterialIndices],
+    annotations: {
+      items: bgAnnotationState.items.map(item => ({ ...item })),
+      nextId: bgAnnotationState.nextId,
+      nextNumber: bgAnnotationState.nextNumber,
+      numberSize: bgAnnotationState.numberSize,
+      numberColor: bgAnnotationState.numberColor,
+      blurStrength: bgAnnotationState.blurStrength,
+      maskColor: bgAnnotationState.maskColor,
+      maskRound: bgAnnotationState.maskRound,
+      maskRoundRadius: bgAnnotationState.maskRoundRadius,
+      magnifierColor: bgAnnotationState.magnifierColor,
+      magnifierWidth: bgAnnotationState.magnifierWidth,
+      shadows: { ...bgAnnotationState.shadows },
+    },
   };
 }
 
@@ -2347,15 +3098,23 @@ function pushBgHistory() {
       scale: material.scale,
       shadow: material.shadow,
       round: material.round,
+      cornerRadius: material.cornerRadius,
+      cornerAuto: material.cornerAuto,
+      unused: material.unused,
     })),
     layers: snapshot.layers.map(layer => ({
-      id: layer.id, x: layer.x, y: layer.y, width: layer.width, height: layer.height,
+      id: layer.id, materialIndex: layer.materialIndex, x: layer.x, y: layer.y, width: layer.width, height: layer.height,
       shadow: layer.shadow, round: layer.round,
+      cornerRadius: layer.cornerRadius,
+      cornerAuto: layer.cornerAuto,
+      unused: layer.unused,
     })),
     selectedId: snapshot.selectedId,
     selectedIds: snapshot.selectedIds,
     selectedMaterialIndex: snapshot.selectedMaterialIndex,
     selectedMaterialIndices: snapshot.selectedMaterialIndices,
+    background: snapshot.background,
+    annotations: snapshot.annotations,
   });
   if (bgHistory[bgHistoryIndex]?.signature === signature) return;
   bgHistory = bgHistory.slice(0, bgHistoryIndex + 1);
@@ -2385,10 +3144,46 @@ function restoreBgHistory(index) {
   blueBgState.layers = entry.snapshot.layers.map(layer => ({ ...layer }));
   blueBgState.selectedId = entry.snapshot.selectedId;
   blueBgState.selectedIds = (entry.snapshot.selectedIds || []).filter(id => blueBgState.layers.some(layer => layer.id === id));
+  const annotations = entry.snapshot.annotations || {};
+  bgAnnotationState.items = (annotations.items || []).map(item => ({ ...item }));
+  bgAnnotationState.nextId = annotations.nextId || Math.max(0, ...bgAnnotationState.items.map(item => item.id)) + 1;
+  bgAnnotationState.nextNumber = annotations.nextNumber || Math.max(
+    0, ...bgAnnotationState.items.filter(item => item.type === "number").map(item => item.number)
+  ) + 1;
+  bgAnnotationState.numberSize = annotations.numberSize || ANNOTATION_NUMBER_SIZE;
+  bgAnnotationState.numberColor = annotations.numberColor || "#ff5a52";
+  bgAnnotationState.blurStrength = annotations.blurStrength || 16;
+  bgAnnotationState.maskColor = annotations.maskColor || "#98b2c0";
+  bgAnnotationState.maskRound = Boolean(annotations.maskRound);
+  bgAnnotationState.maskRoundRadius = annotations.maskRoundRadius || 16;
+  bgAnnotationState.magnifierColor = annotations.magnifierColor || ANNOTATION_MAGNIFIER_COLOR;
+  bgAnnotationState.magnifierWidth = annotations.magnifierWidth || ANNOTATION_MAGNIFIER_LINE_WIDTH;
+  bgAnnotationState.shadows = {
+    number: false,
+    mask: false,
+    blur: false,
+    magnifier: false,
+    ...(annotations.shadows || {}),
+  };
+  clearBgAnnotationSelection();
+  if (entry.snapshot.background) {
+    const background = entry.snapshot.background;
+    blueBgState.backgroundType = background.type || "lizhi";
+    blueBgState.backgroundColor = background.color || BG_DEFAULT_COLOR;
+    blueBgState.backgroundGradient = background.gradient || BG_GRADIENT_PRESETS[0].id;
+    blueBgState.backgroundImageUrl = background.imageUrl || "";
+    blueBgState.backgroundImageName = background.imageName || "";
+    blueBgState.backgroundImage = null;
+    blueBgState.aspectMode = background.aspectMode || "default";
+    blueBgState.defaultAspect = background.defaultAspect || blueBgState.defaultAspect;
+  }
   renderBgMaterialList();
   if ($("#bgBlueMode").checked) {
-    updateBlueBgControls();
-    renderBlueBgCanvas();
+    ensureUnifiedBgBackground(blueBgState.layers[0]?.image || null).then(() => {
+      updateBlueBgControls();
+      renderBlueBgCanvas();
+      resetBlueBgZoom();
+    }).catch(err => blueBgStatus(err.message));
   } else {
     if (bgSelectedMaterialIndex >= 0) openBgMaterialInspector(bgSelectedMaterialIndex);
     processBgImages().catch(err => alert(err.message));
@@ -2406,7 +3201,7 @@ function renderBgPreviewList() {
   bgMaterials.forEach((material, index) => {
     const card = document.createElement("button");
     card.type = "button";
-    card.className = `bg-preview-card${selectedDefaultBgMaterialIndexes().includes(index) ? " active" : ""}`;
+    card.className = `bg-preview-card${selectedDefaultBgMaterialIndexes().includes(index) ? " active" : ""}${material.unused ? " is-unused" : ""}`;
     card.dataset.bgPreviewIndex = String(index);
     if (material.outputUrl) {
       const img = document.createElement("img");
@@ -2422,6 +3217,12 @@ function renderBgPreviewList() {
     const label = document.createElement("small");
     label.textContent = material.outputLabel || material.file.name;
     card.appendChild(label);
+    if (material.unused) {
+      const badge = document.createElement("span");
+      badge.className = "bg-material-unused-badge";
+      badge.textContent = "未使用";
+      card.appendChild(badge);
+    }
     wrap.appendChild(card);
   });
   if (!wrap.children.length) {
@@ -2484,13 +3285,23 @@ async function renderDefaultBgMaterial(index, scheduledVersion = null) {
   if (!material.outputUrl) refreshDefaultBgPreviewCard(index);
   try {
     const { file, scale, shadow, round } = material;
-    const { blob, mode, appliedShadow, appliedRound } = await renderBgInBrowser(
-      file,
-      scale,
-      shadow,
-      round,
-      controller.signal,
-    );
+    const form = new FormData();
+    form.append("image", file);
+    form.append("scale", scale);
+    form.append("shadow", shadow ? "1" : "0");
+    form.append("round", round ? "1" : "0");
+    form.append("cornerMode", material.cornerAuto === false ? "manual" : "auto");
+    if (material.cornerAuto === false) form.append("cornerRadius", material.cornerRadius);
+    const res = await fetch("/api/render-bg", {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const mode = res.headers.get("X-Lizhi-Bg-Mode") || "manual";
+    const appliedShadow = res.headers.get("X-Lizhi-Bg-Shadow") === "1";
+    const appliedRound = res.headers.get("X-Lizhi-Bg-Round") === "1";
+    const blob = await res.blob();
     if (version !== material.renderVersion) return;
     const previousOutputUrl = material.outputUrl;
     material.outputBlob = blob;
@@ -2611,12 +3422,80 @@ function updateImageEditorControls() {
 function intersectImageEditorSelection(selection = imageEditorState.selection) {
   if (!selection) return null;
   const source = imageEditorState.documentCanvas;
-  const left = Math.max(0, selection.x);
-  const top = Math.max(0, selection.y);
-  const right = Math.min(source.width, selection.x + selection.width);
-  const bottom = Math.min(source.height, selection.y + selection.height);
+  const bounds = imageEditorSelectionVisualBounds(selection);
+  const left = Math.max(0, bounds.x);
+  const top = Math.max(0, bounds.y);
+  const right = Math.min(source.width, bounds.x + bounds.width);
+  const bottom = Math.min(source.height, bounds.y + bounds.height);
   if (right <= left || bottom <= top) return null;
   return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+function imageEditorRemovalIsHorizontal(selection = imageEditorState.selection) {
+  if (!selection) return true;
+  const source = imageEditorState.documentCanvas;
+  return selection.width / Math.max(1, source.width) >=
+    selection.height / Math.max(1, source.height);
+}
+
+function imageEditorSelectionVisualBounds(selection) {
+  const skew = Number(selection?.skew) || 0;
+  if (!selection || !skew) return selection ? { ...selection } : null;
+  if (imageEditorRemovalIsHorizontal(selection)) {
+    return {
+      x: selection.x,
+      y: selection.y + Math.min(0, skew),
+      width: selection.width,
+      height: selection.height + Math.abs(skew),
+    };
+  }
+  return {
+    x: selection.x + Math.min(0, skew),
+    y: selection.y,
+    width: selection.width + Math.abs(skew),
+    height: selection.height,
+  };
+}
+
+function imageEditorSelectionPolygon(selection) {
+  const skew = Number(selection?.skew) || 0;
+  const x = selection.x;
+  const y = selection.y;
+  const right = x + selection.width;
+  const bottom = y + selection.height;
+  return imageEditorRemovalIsHorizontal(selection)
+    ? [
+        { x, y },
+        { x: right, y: y + skew },
+        { x: right, y: bottom + skew },
+        { x, y: bottom },
+      ]
+    : [
+        { x, y },
+        { x: right, y },
+        { x: right + skew, y: bottom },
+        { x: x + skew, y: bottom },
+      ];
+}
+
+function pointInImageEditorSelection(selection, point) {
+  const polygon = imageEditorState.mode === "remove"
+    ? imageEditorSelectionPolygon(selection)
+    : [
+        { x: selection.x, y: selection.y },
+        { x: selection.x + selection.width, y: selection.y },
+        { x: selection.x + selection.width, y: selection.y + selection.height },
+        { x: selection.x, y: selection.y + selection.height },
+      ];
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const a = polygon[index];
+    const b = polygon[previous];
+    const crosses = (a.y > point.y) !== (b.y > point.y) &&
+      point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y || Number.EPSILON) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
 }
 
 function drawImageEditorSelection(ctx) {
@@ -2626,7 +3505,12 @@ function drawImageEditorSelection(ctx) {
   ctx.save();
   if (imageEditorState.mode === "remove" && overlap) {
     ctx.fillStyle = "rgba(239, 68, 68, .28)";
-    ctx.fillRect(overlap.x, overlap.y, overlap.width, overlap.height);
+    const polygon = imageEditorSelectionPolygon(selection);
+    ctx.beginPath();
+    ctx.moveTo(polygon[0].x, polygon[0].y);
+    polygon.slice(1).forEach(point => ctx.lineTo(point.x, point.y));
+    ctx.closePath();
+    ctx.fill();
   } else if (imageEditorState.mode === "crop") {
     const canvas = imageEditorState.documentCanvas;
     ctx.fillStyle = "rgba(15, 23, 42, .48)";
@@ -2751,7 +3635,7 @@ function syncImageEditorOverlays() {
   selectionOverlay.hidden = !selection;
   selectionOverlay.classList.toggle(
     "is-adjusting",
-    ["create", "adjust", "move-selection"].includes(imageEditorState.interaction?.mode)
+    ["create", "adjust", "shear", "move-selection"].includes(imageEditorState.interaction?.mode)
   );
   if (selection) {
     syncCanvasSelectionOverlay(
@@ -2760,6 +3644,30 @@ function syncImageEditorOverlays() {
       selectionOverlay,
       selection
     );
+    const horizontalShear = imageEditorState.mode === "remove" && imageEditorRemovalIsHorizontal(selection);
+    const skew = imageEditorState.mode === "remove" ? Number(selection.skew) || 0 : 0;
+    const canvasRect = imageEditorCanvas().getBoundingClientRect();
+    const displaySkew = horizontalShear
+      ? skew * canvasRect.height / Math.max(1, imageEditorCanvas().height)
+      : skew * canvasRect.width / Math.max(1, imageEditorCanvas().width);
+    const displaySpan = horizontalShear
+      ? selection.width * canvasRect.width / Math.max(1, imageEditorCanvas().width)
+      : selection.height * canvasRect.height / Math.max(1, imageEditorCanvas().height);
+    const shearAngle = Math.atan2(displaySkew, Math.max(1, displaySpan));
+    selectionOverlay.style.transformOrigin = "0 0";
+    selectionOverlay.style.transform = skew
+      ? `${horizontalShear ? "skewY" : "skewX"}(${shearAngle}rad)`
+      : "";
+    selectionOverlay.style.setProperty(
+      "--selection-counter-transform",
+      skew ? `${horizontalShear ? "skewY" : "skewX"}(${-shearAngle}rad)` : "none"
+    );
+    selectionOverlay.classList.toggle("is-shear-y", horizontalShear);
+    selectionOverlay.classList.toggle("is-shear-x", !horizontalShear && imageEditorState.mode === "remove");
+  } else {
+    selectionOverlay.style.transform = "";
+    selectionOverlay.style.removeProperty("--selection-counter-transform");
+    selectionOverlay.classList.remove("is-shear-y", "is-shear-x");
   }
   const gradient = imageEditorState.gradient;
   gradientOverlay.hidden = !gradient;
@@ -2861,7 +3769,7 @@ function drawImageEditorComposite(ctx, width, height, withGuide) {
 function applyImageEditorZoom(zoom) {
   if (!imageEditorState.hasImage || !imageEditorState.baseDisplayWidth) return;
   const canvas = imageEditorCanvas();
-  imageEditorState.zoom = Math.max(0.25, Math.min(20, zoom));
+  imageEditorState.zoom = Math.max(0.5, Math.min(20, zoom));
   canvas.style.width = `${imageEditorState.baseDisplayWidth * imageEditorState.zoom}px`;
   canvas.style.height = `${imageEditorState.baseDisplayHeight * imageEditorState.zoom}px`;
   canvas.style.imageRendering = imageEditorState.zoom >= 4 ? "pixelated" : "auto";
@@ -2939,7 +3847,7 @@ function setImageEditorMode(mode) {
   renderImageEditorCanvas();
   updateImageEditorControls();
   const message = mode === "remove"
-    ? "区段删除：可从画布空白处开始框选；方向会按选区与图像的重叠形状自动判断。"
+    ? "区段删除：框选后拖动短边可斜切删除区域；接近矩形时会自动吸附。"
     : mode === "crop"
       ? "画布裁切：拖动画出要保留的画面范围，再点击“应用所选区域”。"
       : mode === "split"
@@ -3072,26 +3980,31 @@ function imageEditorPointerDown(event) {
   } else if (["remove", "crop"].includes(imageEditorState.mode)) {
     const handle = event.target.closest("[data-selection-handle]")?.dataset.selectionHandle;
     if (handle && imageEditorState.selection) {
+      const horizontalRemoval = imageEditorState.mode === "remove" &&
+        imageEditorRemovalIsHorizontal(imageEditorState.selection);
+      const shearHandle = imageEditorState.mode === "remove" && (
+        (horizontalRemoval && ["e", "w"].includes(handle)) ||
+        (!horizontalRemoval && ["n", "s"].includes(handle))
+      );
       imageEditorState.interaction = {
-        mode: "adjust",
+        mode: shearHandle ? "shear" : "adjust",
         handle,
         start: point,
         original: { ...imageEditorState.selection },
+        snappedToRectangle: false,
       };
-    } else if (
-      imageEditorState.selection &&
-      point.x >= imageEditorState.selection.x &&
-      point.x <= imageEditorState.selection.x + imageEditorState.selection.width &&
-      point.y >= imageEditorState.selection.y &&
-      point.y <= imageEditorState.selection.y + imageEditorState.selection.height
-    ) {
+    } else if (imageEditorState.selection) {
+      if (!pointInImageEditorSelection(imageEditorState.selection, point)) {
+        cancelImageEditorSelection();
+        $("#imageEditorStage").focus();
+        event.preventDefault();
+        return;
+      }
       imageEditorState.interaction = {
         mode: "move-selection",
         start: point,
         original: { ...imageEditorState.selection },
       };
-    } else if (imageEditorState.selection) {
-      return;
     } else {
       const snapped = snapImageEditorPoint(point);
       imageEditorState.snapGuides = snapped.guides;
@@ -3135,10 +4048,41 @@ function resizeImageEditorSelection(interaction, point, event) {
   const snapped = snapImageEditorPoint(point, axes);
   point = snapped.point;
   imageEditorState.snapGuides = snapped.guides;
-  return resizeBoundsWithModifiers(interaction.original, interaction.handle, point, {
+  return {
+    ...resizeBoundsWithModifiers(interaction.original, interaction.handle, point, {
     preserveAspect: event.shiftKey,
     centered: event.altKey || event.ctrlKey,
-  });
+    }),
+    skew: Number(interaction.original.skew) || 0,
+  };
+}
+
+function shearImageEditorSelection(interaction, point) {
+  const original = interaction.original;
+  const horizontal = imageEditorRemovalIsHorizontal(original);
+  const canvas = imageEditorCanvas();
+  const rect = canvas.getBoundingClientRect();
+  const tolerance = horizontal
+    ? 10 * canvas.height / Math.max(1, rect.height)
+    : 10 * canvas.width / Math.max(1, rect.width);
+  const delta = horizontal ? point.y - interaction.start.y : point.x - interaction.start.x;
+  let selection = { ...original };
+  if (horizontal) {
+    if (interaction.handle === "e") {
+      selection.skew = (Number(original.skew) || 0) + delta;
+    } else {
+      selection.y = original.y + delta;
+      selection.skew = (Number(original.skew) || 0) - delta;
+    }
+  } else if (interaction.handle === "s") {
+    selection.skew = (Number(original.skew) || 0) + delta;
+  } else {
+    selection.x = original.x + delta;
+    selection.skew = (Number(original.skew) || 0) - delta;
+  }
+  interaction.snappedToRectangle = Math.abs(selection.skew) <= tolerance;
+  if (interaction.snappedToRectangle) selection.skew = 0;
+  return selection;
 }
 
 function imageEditorPointerMove(event) {
@@ -3146,8 +4090,7 @@ function imageEditorPointerMove(event) {
     const selection = imageEditorState.selection;
     if (selection && ["remove", "crop"].includes(imageEditorState.mode)) {
       const point = imageEditorPointerPosition(event);
-      const inside = point.x >= selection.x && point.x <= selection.x + selection.width &&
-        point.y >= selection.y && point.y <= selection.y + selection.height;
+      const inside = pointInImageEditorSelection(selection, point);
       $("#imageEditorStage").style.cursor = inside ? "move" : "";
     }
     return;
@@ -3185,13 +4128,18 @@ function imageEditorPointerMove(event) {
       x: interaction.original.x + point.x - interaction.start.x,
       y: interaction.original.y + point.y - interaction.start.y,
     };
-    const snapped = snapBoundsToCanvas(moved, imageEditorCanvas(), 10, true);
+    const canvas = imageEditorCanvas();
+    const frame = selectionFrameBounds(canvas, moved);
+    const snapped = snapBoundsToCanvas(frame, canvas, 10, true);
     imageEditorState.selection = {
       ...moved,
-      x: snapped.x,
-      y: snapped.y,
+      x: moved.x + snapped.x - frame.x,
+      y: moved.y + snapped.y - frame.y,
     };
     imageEditorState.snapGuides = snapped.guides;
+  } else if (interaction.mode === "shear") {
+    imageEditorState.selection = shearImageEditorSelection(interaction, point);
+    imageEditorState.snapGuides = emptySnapGuides();
   } else {
     imageEditorState.selection = resizeImageEditorSelection(interaction, point, event);
   }
@@ -3218,6 +4166,7 @@ function imageEditorPointerUp(event) {
     return;
   }
   const snapped = imageEditorState.snapGuides.vertical.length || imageEditorState.snapGuides.horizontal.length;
+  const snappedToRectangle = interaction.mode === "shear" && interaction.snappedToRectangle;
   imageEditorState.snapGuides = emptySnapGuides();
   const selection = imageEditorState.selection;
   if (!selection || selection.width < 2 || selection.height < 2) {
@@ -3234,13 +4183,13 @@ function imageEditorPointerUp(event) {
   }
   const dimensions = `${Math.round(effective.width)} × ${Math.round(effective.height)}px`;
   const direction = imageEditorState.mode === "remove"
-    ? (effective.width / imageEditorState.documentCanvas.width >= effective.height / imageEditorState.documentCanvas.height
+    ? (imageEditorRemovalIsHorizontal(selection)
       ? "上下拼合"
       : "左右拼合")
     : "";
   imageEditorStatus(
     imageEditorState.mode === "remove"
-      ? `有效删除区域 ${dimensions} · 将自动${direction}${snapped ? " · 已吸附到边缘" : ""}。`
+      ? `有效删除区域 ${dimensions} · 将自动${direction}${snapped ? " · 已吸附到边缘" : ""}${snappedToRectangle ? " · 已吸附回矩形" : ""}。`
       : `已框选保留区域 ${dimensions}${snapped ? " · 已吸附到边缘" : ""}。`
   );
   renderImageEditorCanvas();
@@ -3253,6 +4202,41 @@ function cancelImageEditorSelection() {
   renderImageEditorCanvas();
   updateImageEditorControls();
   imageEditorStatus("已取消当前框选。");
+}
+
+function applyShearedImageEditorRemoval(source, selection, horizontal) {
+  const result = document.createElement("canvas");
+  const skew = Number(selection.skew) || 0;
+  if (horizontal) {
+    const removed = Math.max(2, Math.min(source.height - 1, Math.round(selection.height)));
+    result.width = source.width;
+    result.height = source.height - removed;
+    const out = result.getContext("2d");
+    for (let x = 0; x < source.width; x++) {
+      const progress = (x - selection.x) / Math.max(1, selection.width);
+      const start = Math.max(0, Math.min(source.height - removed, Math.round(selection.y + skew * progress)));
+      if (start > 0) out.drawImage(source, x, 0, 1, start, x, 0, 1, start);
+      const bottom = source.height - start - removed;
+      if (bottom > 0) {
+        out.drawImage(source, x, start + removed, 1, bottom, x, start, 1, bottom);
+      }
+    }
+    return result;
+  }
+  const removed = Math.max(2, Math.min(source.width - 1, Math.round(selection.width)));
+  result.width = source.width - removed;
+  result.height = source.height;
+  const out = result.getContext("2d");
+  for (let y = 0; y < source.height; y++) {
+    const progress = (y - selection.y) / Math.max(1, selection.height);
+    const start = Math.max(0, Math.min(source.width - removed, Math.round(selection.x + skew * progress)));
+    if (start > 0) out.drawImage(source, 0, y, start, 1, 0, y, start, 1);
+    const right = source.width - start - removed;
+    if (right > 0) {
+      out.drawImage(source, start + removed, y, right, 1, start, y, right, 1);
+    }
+  }
+  return result;
 }
 
 function applyImageEditorSelection() {
@@ -3276,8 +4260,10 @@ function applyImageEditorSelection() {
     const y = Math.round(overlap.y);
     const width = Math.round(overlap.width);
     const height = Math.round(overlap.height);
-    const horizontal = width / source.width >= height / source.height;
-    if (horizontal) {
+    const horizontal = imageEditorRemovalIsHorizontal(selection);
+    if (Math.abs(Number(selection.skew) || 0) >= 0.5) {
+      result = applyShearedImageEditorRemoval(source, selection, imageEditorRemovalIsHorizontal(selection));
+    } else if (horizontal) {
       if (height < 2 || height >= source.height) return;
       result.width = source.width;
       result.height = source.height - height;
@@ -3496,14 +4482,39 @@ function imageEditorKeyDown(event) {
 }
 
 function annotationCanvas() {
-  return $("#annotationCanvas");
+  return annotationState.host === "bg" ? $("#bgAnnotationCanvas") : $("#annotationCanvas");
 }
 
 function annotationContext() {
   return annotationCanvas().getContext("2d");
 }
 
+function annotationStage() {
+  return annotationState.host === "bg" ? $("#blueBgStage") : $("#annotationStage");
+}
+
+function annotationSelectionOverlay() {
+  return annotationState.host === "bg"
+    ? $("#bgAnnotationSelectionOverlay")
+    : $("#annotationSelectionOverlay");
+}
+
+function annotationControl(name) {
+  if (annotationState.host !== "bg") return $(`#annotation${name}`);
+  return $(`#bgAnnotation${name}`);
+}
+
+function setAnnotationCursor(cursor) {
+  annotationCanvas().style.cursor = cursor;
+  annotationStage().style.cursor = cursor;
+}
+
 function pushAnnotationHistory() {
+  if (annotationState.host === "bg") {
+    pushBgHistory();
+    updateBgAnnotationControls();
+    return;
+  }
   const snapshot = annotationState.items.map(item => ({ ...item }));
   const signature = JSON.stringify(snapshot);
   if (annotationState.history[annotationState.historyIndex]?.signature === signature) return;
@@ -3527,8 +4538,10 @@ function restoreAnnotationHistory(index) {
   annotationState.items = entry.snapshot.map(item => ({ ...item }));
   annotationState.selectedId = annotationState.items.at(-1)?.id ?? null;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = annotationState.items.at(-1)?.type === "magnifier" ? "lens" : null;
   annotationState.nextId = Math.max(0, ...annotationState.items.map(item => item.id)) + 1;
   annotationState.nextNumber = Math.max(0, ...annotationState.items.filter(item => item.type === "number").map(item => item.number)) + 1;
+  annotationState.numberSize = annotationState.items.find(item => item.type === "number")?.size ?? ANNOTATION_NUMBER_SIZE;
   annotationState.editingNumberId = null;
   updateAnnotationControls();
   renderAnnotationCanvas();
@@ -3536,6 +4549,10 @@ function restoreAnnotationHistory(index) {
 }
 
 function updateAnnotationControls() {
+  if (annotationState.host === "bg") {
+    updateBgAnnotationControls();
+    return;
+  }
   const hasImage = Boolean(annotationState.image);
   const selectedItems = selectedAnnotationItems();
   const selected = selectedItems.length === 1 ? selectedItems[0] : null;
@@ -3571,30 +4588,166 @@ function updateAnnotationControls() {
     $("#annotationMagnifierWidth").value = String(selected.lineWidth);
     $("#annotationMagnifierWidthValue").textContent = `${selected.lineWidth}px`;
   }
+  const numberControls = $("#annotationNumberControls");
+  const showNumberControls = selected?.type === "number" && annotationState.editingNumberId === null;
+  numberControls.hidden = !showNumberControls;
+  if (showNumberControls) {
+    const size = annotationNumberSize(selected);
+    $("#annotationNumberSize").value = String(size);
+    $("#annotationNumberSizeValue").textContent = `${size}px`;
+  }
   $("#annotationNumberEditor").hidden = annotationState.editingNumberId === null;
 }
 
+function updateBgAnnotationControls() {
+  const hasImage = blueBgState.layers.length > 0;
+  const selectedItems = selectedAnnotationItems();
+  const selected = selectedItems.length === 1 ? selectedItems[0] : null;
+  const annotationActive = blueBgState.toolMode === "annotation";
+  const displayType = selected?.type || (annotationActive ? annotationState.mode : null);
+  [
+    ["#bgAddAnnotationNumber", "number"],
+    ["#bgAddAnnotationMask", "mask"],
+    ["#bgAddAnnotationBlur", "blur"],
+    ["#bgAddAnnotationMagnifier", "magnifier"],
+  ].forEach(([selector, mode]) => {
+    const button = $(selector);
+    button.disabled = !hasImage;
+    button.classList.toggle("active", annotationActive && annotationState.mode === mode);
+  });
+  const inspector = $("#bgAnnotationInspector");
+  const showInspector = blueBgState.inspectorMode === "annotation";
+  inspector.hidden = !showInspector;
+  const maskControls = $("#bgAnnotationMaskControls");
+  const blurControls = $("#bgAnnotationBlurControls");
+  const numberControls = $("#bgAnnotationNumberControls");
+  const magnifierControls = $("#bgAnnotationMagnifierControls");
+  maskControls.hidden = displayType !== "mask";
+  blurControls.hidden = displayType !== "blur";
+  numberControls.hidden = displayType !== "number";
+  magnifierControls.hidden = displayType !== "magnifier";
+  const hasAdjustments = [maskControls, blurControls, numberControls, magnifierControls]
+    .some(control => !control.hidden);
+  const idle = $("#bgAnnotationIdle");
+  idle.hidden = hasAdjustments;
+  if (!hasAdjustments) {
+    idle.textContent = "选择一种标注工具后，可在这里预先设置创建效果。";
+  }
+  const maskColor = selected?.type === "mask"
+    ? selected.color || "#98b2c0"
+    : annotationState.maskColor || "#98b2c0";
+  $("#bgAnnotationMaskColor").value = maskColor;
+  syncBgAnnotationColorTiles("mask", maskColor);
+  const maskShadow = selected?.type === "mask" ? Boolean(selected.shadow) : Boolean(annotationState.shadows.mask);
+  const maskRound = selected?.type === "mask" ? Boolean(selected.round) : Boolean(annotationState.maskRound);
+  const maskRadius = selected?.type === "mask"
+    ? Number(selected.cornerRadius) || 16
+    : annotationState.maskRoundRadius || 16;
+  $("#bgAnnotationMaskShadow").checked = maskShadow;
+  $("#bgAnnotationMaskRound").checked = maskRound;
+  $("#bgAnnotationMaskRoundRadius").disabled = !maskRound;
+  $("#bgAnnotationMaskRoundRadius").value = String(maskRadius);
+  $("#bgAnnotationMaskRoundRadiusValue").textContent = `${maskRadius} px`;
+  if (displayType === "blur") {
+    const strength = selected?.type === "blur" ? selected.strength : annotationState.blurStrength;
+    $("#bgAnnotationBlurStrength").value = String(strength);
+    $("#bgAnnotationBlurStrengthValue").textContent = `${strength}px`;
+    $("#bgAnnotationBlurShadow").checked = selected?.type === "blur"
+      ? Boolean(selected.shadow)
+      : Boolean(annotationState.shadows.blur);
+  }
+  if (displayType === "number") {
+    const size = selected?.type === "number" ? annotationNumberSize(selected) : annotationState.numberSize;
+    const color = selected?.type === "number" ? selected.color || "#ff5a52" : annotationState.numberColor;
+    $("#bgAnnotationNumberSize").value = String(size);
+    $("#bgAnnotationNumberSizeValue").textContent = `${size}px`;
+    $("#bgAnnotationNumberColor").value = color;
+    $("#bgAnnotationNumberShadow").checked = selected?.type === "number"
+      ? Boolean(selected.shadow)
+      : Boolean(annotationState.shadows.number);
+    syncBgAnnotationColorTiles("number", color);
+  }
+  if (displayType === "magnifier") {
+    const color = selected?.type === "magnifier" ? selected.color : annotationState.magnifierColor;
+    const width = selected?.type === "magnifier" ? selected.lineWidth : annotationState.magnifierWidth;
+    $("#bgAnnotationMagnifierColor").value = color;
+    $("#bgAnnotationMagnifierWidth").value = String(width);
+    $("#bgAnnotationMagnifierWidthValue").textContent = `${width}px`;
+    $("#bgAnnotationMagnifierShadow").checked = selected?.type === "magnifier"
+      ? Boolean(selected.shadow)
+      : Boolean(annotationState.shadows.magnifier);
+    syncBgAnnotationColorTiles("magnifier", color);
+  }
+  $("#bgDeleteSelected").disabled = !selectedItems.length && !selectedBlueBgLayers().length;
+}
+
+function syncBgAnnotationColorTiles(kind, color) {
+  const normalized = String(color || "").toLowerCase();
+  const buttons = $$(`[data-annotation-color-kind="${kind}"]`, $("#bgAnnotationInspector"));
+  buttons.forEach(button => {
+    button.classList.toggle("active", button.dataset.annotationColor.toLowerCase() === normalized);
+  });
+  const inputId = {
+    mask: "#bgAnnotationMaskColor",
+    number: "#bgAnnotationNumberColor",
+    magnifier: "#bgAnnotationMagnifierColor",
+  }[kind];
+  const custom = $(inputId)?.closest(".bg-annotation-custom-color");
+  if (custom) {
+    const preset = buttons.some(button => button.dataset.annotationColor.toLowerCase() === normalized);
+    custom.classList.toggle("active", !preset);
+  }
+}
+
 function annotationStatusText(message) {
-  $("#annotationStatus").textContent = message;
+  if (annotationState.host === "bg") blueBgStatus(message);
+  else $("#annotationStatus").textContent = message;
 }
 
 function annotationItemBounds(item) {
   if (item.type === "number") {
-    return {
-      x: item.x - ANNOTATION_NUMBER_SIZE / 2,
-      y: item.y - ANNOTATION_NUMBER_SIZE / 2,
-      width: ANNOTATION_NUMBER_SIZE,
-      height: ANNOTATION_NUMBER_SIZE,
-    };
+    const size = annotationNumberSize(item);
+    return expandAnnotationBoundsForShadow(item, {
+      x: item.x - size / 2,
+      y: item.y - size / 2,
+      width: size,
+      height: size,
+    });
   }
   if (item.type === "magnifier") {
-    const left = Math.min(item.sourceX - item.sourceRadius, item.lensX - item.lensRadius);
-    const top = Math.min(item.sourceY - item.sourceRadius, item.lensY - item.lensRadius);
-    const right = Math.max(item.sourceX + item.sourceRadius, item.lensX + item.lensRadius);
-    const bottom = Math.max(item.sourceY + item.sourceRadius, item.lensY + item.lensRadius);
-    return { x: left, y: top, width: right - left, height: bottom - top };
+    const left = Math.min(
+      magnifierVisualBounds(item, "source").x,
+      magnifierVisualBounds(item, "lens").x
+    );
+    const top = Math.min(
+      magnifierVisualBounds(item, "source").y,
+      magnifierVisualBounds(item, "lens").y
+    );
+    const right = Math.max(
+      magnifierVisualBounds(item, "source").x + magnifierVisualBounds(item, "source").width,
+      magnifierVisualBounds(item, "lens").x + magnifierVisualBounds(item, "lens").width
+    );
+    const bottom = Math.max(
+      magnifierVisualBounds(item, "source").y + magnifierVisualBounds(item, "source").height,
+      magnifierVisualBounds(item, "lens").y + magnifierVisualBounds(item, "lens").height
+    );
+    return expandAnnotationBoundsForShadow(item, { x: left, y: top, width: right - left, height: bottom - top });
   }
-  return { x: item.x, y: item.y, width: item.width, height: item.height };
+  return expandAnnotationBoundsForShadow(item, { x: item.x, y: item.y, width: item.width, height: item.height });
+}
+
+function annotationShadowOutset(item) {
+  return item?.shadow ? 30 : 0;
+}
+
+function expandAnnotationBoundsForShadow(item, bounds) {
+  const outset = annotationShadowOutset(item);
+  return {
+    x: bounds.x - outset,
+    y: bounds.y - outset,
+    width: bounds.width + outset * 2,
+    height: bounds.height + outset * 2,
+  };
 }
 
 function selectedAnnotationItems() {
@@ -3610,29 +4763,100 @@ function annotationSelectionBounds() {
 
 function annotationSelectionEntries() {
   return selectedAnnotationItems()
-    .map(item => ({ id: item.id, bounds: annotationItemBounds(item) }))
+    .flatMap(item => {
+      if (item.type !== "magnifier") return [{ id: item.id, bounds: annotationItemBounds(item) }];
+      return selectedMagnifierParts(item).map(part => ({
+        id: `${item.id}-${part}`,
+        bounds: magnifierPartBounds(item, part),
+      }));
+    })
     .sort((a, b) => Number(b.id === annotationState.selectedId) - Number(a.id === annotationState.selectedId));
 }
 
-function drawAnnotationItem(ctx, item) {
+function annotationNumberSize(item) {
+  return Number(item?.size) || annotationState.numberSize || ANNOTATION_NUMBER_SIZE;
+}
+
+function magnifierPartBounds(item, part) {
+  const prefix = part === "source" ? "source" : "lens";
+  const radius = item[`${prefix}Radius`];
+  const margin = magnifierStrokeMargin(item) + annotationShadowOutset(item);
+  return {
+    x: item[`${prefix}X`] - radius - margin,
+    y: item[`${prefix}Y`] - radius - margin,
+    width: (radius + margin) * 2,
+    height: (radius + margin) * 2,
+  };
+}
+
+function magnifierVisualBounds(item, part) {
+  const prefix = part === "source" ? "source" : "lens";
+  const radius = item[`${prefix}Radius`];
+  const margin = magnifierStrokeMargin(item);
+  return {
+    x: item[`${prefix}X`] - radius - margin,
+    y: item[`${prefix}Y`] - radius - margin,
+    width: (radius + margin) * 2,
+    height: (radius + margin) * 2,
+  };
+}
+
+function magnifierStrokeMargin(item) {
+  return (Number(item?.lineWidth) || ANNOTATION_MAGNIFIER_LINE_WIDTH) / 2 + 1;
+}
+
+function magnifierSelectionMargin(item) {
+  return magnifierStrokeMargin(item) + annotationShadowOutset(item) + canvasDisplayUnit(annotationCanvas());
+}
+
+function selectedMagnifierParts(item) {
+  if (!selectedAnnotationItems().some(candidate => candidate.id === item.id)) return [];
+  const sourceCovered = Math.hypot(item.lensX - item.sourceX, item.lensY - item.sourceY) + item.sourceRadius <= item.lensRadius;
+  if (item.id === annotationState.selectedId && annotationState.selectedPart) {
+    return annotationState.selectedPart === "source" && sourceCovered ? [] : [annotationState.selectedPart];
+  }
+  return sourceCovered ? ["lens"] : ["source", "lens"];
+}
+
+function drawAnnotationItem(ctx, item, includeSelection = false) {
+  if (!item.shadow) {
+    drawAnnotationItemContent(ctx, item, includeSelection);
+    return;
+  }
+  const surface = document.createElement("canvas");
+  surface.width = ctx.canvas.width;
+  surface.height = ctx.canvas.height;
+  drawAnnotationItemContent(surface.getContext("2d"), item, false);
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, .28)";
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 6;
+  ctx.drawImage(surface, 0, 0);
+  ctx.restore();
+}
+
+function drawAnnotationItemContent(ctx, item, includeSelection = false) {
   if (item.type === "number") {
-    const radius = ANNOTATION_NUMBER_SIZE / 2;
+    const size = annotationNumberSize(item);
+    const radius = size / 2;
     ctx.save();
-    ctx.fillStyle = "#ff5a52";
+    ctx.fillStyle = item.color || "#ff5a52";
     ctx.beginPath();
     ctx.arc(item.x, item.y, radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#ffffff";
-    const fontSize = String(item.number).length >= 3 ? 50 : 70;
+    const fontSize = size * (String(item.number).length >= 3 ? 50 / 110 : 70 / 110);
     ctx.font = `450 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", MiSans, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(item.number), item.x, item.y + 2);
+    ctx.fillText(String(item.number), item.x, item.y + size * 2 / 110);
     ctx.restore();
     return;
   }
   if (item.type === "magnifier") {
-    if (item.sourceRadius < 1 || item.lensRadius < 1) return;
+    if (item.sourceRadius < 1) return;
+    const hasLens = item.lensRadius >= 1;
     const dx = item.lensX - item.sourceX;
     const dy = item.lensY - item.sourceY;
     const distance = Math.max(1, Math.hypot(dx, dy));
@@ -3642,16 +4866,26 @@ function drawAnnotationItem(ctx, item) {
     ctx.strokeStyle = item.color;
     ctx.lineWidth = item.lineWidth;
     ctx.lineCap = "round";
+    if (hasLens) {
+      ctx.beginPath();
+      ctx.moveTo(
+        item.sourceX + unitX * item.sourceRadius,
+        item.sourceY + unitY * item.sourceRadius
+      );
+      ctx.lineTo(
+        item.lensX - unitX * item.lensRadius,
+        item.lensY - unitY * item.lensRadius
+      );
+      ctx.stroke();
+    }
+
     ctx.beginPath();
-    ctx.moveTo(
-      item.sourceX + unitX * item.sourceRadius,
-      item.sourceY + unitY * item.sourceRadius
-    );
-    ctx.lineTo(
-      item.lensX - unitX * item.lensRadius,
-      item.lensY - unitY * item.lensRadius
-    );
+    ctx.arc(item.sourceX, item.sourceY, item.sourceRadius, 0, Math.PI * 2);
     ctx.stroke();
+    if (!hasLens) {
+      ctx.restore();
+      return;
+    }
 
     ctx.save();
     ctx.beginPath();
@@ -3676,10 +4910,6 @@ function drawAnnotationItem(ctx, item) {
       item.lensRadius * 2
     );
     ctx.restore();
-
-    ctx.beginPath();
-    ctx.arc(item.sourceX, item.sourceY, item.sourceRadius, 0, Math.PI * 2);
-    ctx.stroke();
     ctx.beginPath();
     ctx.arc(item.lensX, item.lensY, item.lensRadius, 0, Math.PI * 2);
     ctx.stroke();
@@ -3696,42 +4926,55 @@ function drawAnnotationItem(ctx, item) {
     ctx.restore();
   } else {
     ctx.save();
-    ctx.fillStyle = "#98b2c0";
-    ctx.fillRect(item.x, item.y, item.width, item.height);
+    ctx.fillStyle = item.color || "#98b2c0";
+    if (item.round) {
+      continuousRoundedRect(
+        ctx,
+        item.x,
+        item.y,
+        item.width,
+        item.height,
+        Math.min(Number(item.cornerRadius) || 0, item.width / 2, item.height / 2)
+      );
+      ctx.fill();
+    } else {
+      ctx.fillRect(item.x, item.y, item.width, item.height);
+    }
     ctx.restore();
   }
 }
 
 function drawAnnotationSelection(ctx, item) {
-  const bounds = annotationItemBounds(item);
-  drawMarchingAntsSelection(ctx, annotationCanvas(), bounds);
+  const canvas = annotationCanvas();
+  const bounds = selectionFrameBounds(canvas, annotationItemBounds(item));
+  drawMarchingAntsSelection(ctx, canvas, bounds);
 }
 
 function renderAnnotationCanvas(includeSelection = true) {
   if (!annotationState.image) {
     syncCanvasSelectionOverlays(
-      $("#annotationStage"), annotationCanvas(), $("#annotationSelectionOverlay"), []
+      annotationStage(), annotationCanvas(), annotationSelectionOverlay(), []
     );
     return;
   }
   const canvas = annotationCanvas();
   const ctx = annotationContext();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(annotationState.image, 0, 0);
-  annotationState.items.forEach(item => drawAnnotationItem(ctx, item));
+  if (annotationState.host !== "bg") ctx.drawImage(annotationState.image, 0, 0);
+  annotationState.items.forEach(item => drawAnnotationItem(ctx, item, includeSelection));
   drawCanvasSnapGuides(ctx, canvas, annotationState.snapGuides);
   if (includeSelection) {
     syncCanvasSelectionOverlays(
-      $("#annotationStage"),
+      annotationStage(),
       canvas,
-      $("#annotationSelectionOverlay"),
+      annotationSelectionOverlay(),
       annotationSelectionEntries()
     );
   } else {
     syncCanvasSelectionOverlays(
-      $("#annotationStage"),
+      annotationStage(),
       canvas,
-      $("#annotationSelectionOverlay"),
+      annotationSelectionOverlay(),
       []
     );
   }
@@ -3739,19 +4982,17 @@ function renderAnnotationCanvas(includeSelection = true) {
 
 function applyAnnotationZoom(zoom) {
   if (!annotationState.image || !annotationState.baseDisplayWidth) return;
-  annotationState.zoom = Math.max(0.25, Math.min(20, zoom));
+  annotationState.zoom = Math.max(0.5, Math.min(20, zoom));
   const canvas = annotationCanvas();
   canvas.style.width = `${annotationState.baseDisplayWidth * annotationState.zoom}px`;
   canvas.style.height = `${annotationState.baseDisplayHeight * annotationState.zoom}px`;
   canvas.style.imageRendering = annotationState.zoom >= 4 ? "pixelated" : "auto";
-  $("#annotationStage").classList.toggle("at-base-zoom", annotationState.zoom <= 1.001);
+  annotationStage().classList.toggle("at-base-zoom", annotationState.zoom <= 1.001);
+  if (annotationState.mode === "view") {
+    setAnnotationCursor(annotationState.zoom > 1.001 ? "grab" : "default");
+  }
   requestAnimationFrame(() => {
-    syncCanvasSelectionOverlays(
-      $("#annotationStage"),
-      canvas,
-      $("#annotationSelectionOverlay"),
-      annotationSelectionEntries()
-    );
+    renderAnnotationCanvas();
   });
 }
 
@@ -3790,6 +5031,8 @@ function loadAnnotationImage(file) {
     annotationState.items = [];
     annotationState.selectedId = null;
     annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
+    annotationState.numberSize = ANNOTATION_NUMBER_SIZE;
     annotationState.nextNumber = 1;
     annotationState.nextId = 1;
     annotationState.interaction = null;
@@ -3811,10 +5054,20 @@ function loadAnnotationImage(file) {
 
 function setAnnotationMode(mode) {
   if (!annotationState.image) return;
+  if (["number", "mask", "blur", "magnifier"].includes(mode)) {
+    annotationState.selectedId = null;
+    annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
+    annotationState.editingNumberId = null;
+  }
   annotationState.mode = mode;
   annotationState.interaction = null;
   annotationState.snapGuides = emptySnapGuides();
-  annotationCanvas().style.cursor = ["number", "mask", "blur", "magnifier"].includes(mode) ? "crosshair" : "default";
+  setAnnotationCursor(
+    ["number", "mask", "blur", "magnifier"].includes(mode)
+      ? "crosshair"
+      : annotationState.zoom > 1.001 ? "grab" : "default"
+  );
   updateAnnotationControls();
   renderAnnotationCanvas();
   const messages = {
@@ -3825,13 +5078,13 @@ function setAnnotationMode(mode) {
     magnifier: "放大镜模式：拖动划定小圆范围，松开后会在右下角创建实时放大圆。",
   };
   annotationStatusText(messages[mode]);
-  $("#annotationStage").focus();
+  annotationStage().focus();
 }
 
 function clampAnnotationItem(item) {
   const canvas = annotationCanvas();
   if (item.type === "number") {
-    const radius = ANNOTATION_NUMBER_SIZE / 2;
+    const radius = annotationNumberSize(item) / 2;
     item.x = Math.max(radius, Math.min(canvas.width - radius, item.x));
     item.y = Math.max(radius, Math.min(canvas.height - radius, item.y));
     return;
@@ -3839,10 +5092,15 @@ function clampAnnotationItem(item) {
   if (item.type === "magnifier") {
     const minimumRadius = Math.min(20, canvas.width / 4, canvas.height / 4);
     const clampCircle = (xKey, yKey, radiusKey) => {
-      const maximumRadius = Math.max(minimumRadius, Math.min(canvas.width / 2, canvas.height / 2));
+      const edgeMargin = magnifierStrokeMargin(item);
+      const maximumRadius = Math.max(
+        minimumRadius,
+        Math.min(canvas.width / 2 - edgeMargin, canvas.height / 2 - edgeMargin)
+      );
       item[radiusKey] = Math.max(minimumRadius, Math.min(maximumRadius, item[radiusKey]));
-      item[xKey] = Math.max(item[radiusKey], Math.min(canvas.width - item[radiusKey], item[xKey]));
-      item[yKey] = Math.max(item[radiusKey], Math.min(canvas.height - item[radiusKey], item[yKey]));
+      const inset = item[radiusKey] + edgeMargin;
+      item[xKey] = Math.max(inset, Math.min(canvas.width - inset, item[xKey]));
+      item[yKey] = Math.max(inset, Math.min(canvas.height - inset, item[yKey]));
     };
     clampCircle("sourceX", "sourceY", "sourceRadius");
     clampCircle("lensX", "lensY", "lensRadius");
@@ -3860,17 +5118,22 @@ function addAnnotationNumber() {
   const column = (annotationState.nextNumber - 1) % 8;
   const row = Math.floor((annotationState.nextNumber - 1) / 8) % 3;
   const gap = 20;
+  const size = annotationState.numberSize;
   const item = {
     id: annotationState.nextId++,
     type: "number",
     number: annotationState.nextNumber++,
-    x: canvas.width - ANNOTATION_NUMBER_SIZE / 2 - 28 - column * (ANNOTATION_NUMBER_SIZE + gap),
-    y: canvas.height - ANNOTATION_NUMBER_SIZE / 2 - 28 - row * (ANNOTATION_NUMBER_SIZE + gap),
+    size,
+    color: annotationState.numberColor || "#ff5a52",
+    shadow: Boolean(annotationState.shadows.number),
+    x: canvas.width - size / 2 - 28 - column * (size + gap),
+    y: canvas.height - size / 2 - 28 - row * (size + gap),
   };
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   finishAnnotationChange(`已添加序号 ${item.number}`);
 }
 
@@ -3879,6 +5142,9 @@ function addAnnotationNumberAt(point) {
     id: annotationState.nextId++,
     type: "number",
     number: annotationState.nextNumber++,
+    size: annotationState.numberSize,
+    color: annotationState.numberColor || "#ff5a52",
+    shadow: Boolean(annotationState.shadows.number),
     x: point.x,
     y: point.y,
   };
@@ -3886,6 +5152,7 @@ function addAnnotationNumberAt(point) {
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   finishAnnotationChange(`已在点击位置添加序号 ${item.number}`);
 }
 
@@ -3901,11 +5168,16 @@ function addAnnotationMask() {
     y: (canvas.height - height) / 2,
     width,
     height,
+    color: annotationState.maskColor || "#98b2c0",
+    shadow: Boolean(annotationState.shadows.mask),
+    round: Boolean(annotationState.maskRound),
+    cornerRadius: annotationState.maskRoundRadius || 16,
   };
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   finishAnnotationChange("已添加遮挡块");
 }
 
@@ -3921,32 +5193,109 @@ function addAnnotationBlur() {
     y: (canvas.height - height) / 2,
     width,
     height,
-    strength: 16,
+    strength: annotationState.blurStrength || 16,
+    shadow: Boolean(annotationState.shadows.blur),
   };
   clampAnnotationItem(item);
   annotationState.items.push(item);
   annotationState.selectedId = item.id;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   finishAnnotationChange("已添加高斯模糊");
 }
 
 function updateAnnotationMagnifierStyle() {
   const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-  if (selected?.type !== "magnifier") return;
-  selected.color = $("#annotationMagnifierColor").value;
-  selected.lineWidth = Number($("#annotationMagnifierWidth").value);
-  $("#annotationMagnifierWidthValue").textContent = `${selected.lineWidth}px`;
+  const color = annotationControl("MagnifierColor").value;
+  const width = Number(annotationControl("MagnifierWidth").value);
+  annotationState.magnifierColor = color;
+  annotationState.magnifierWidth = width;
+  if (selected?.type === "magnifier") {
+    selected.color = color;
+    selected.lineWidth = width;
+  }
+  annotationControl("MagnifierWidthValue").textContent = `${width}px`;
   renderAnnotationCanvas();
-  annotationStatusText(`放大镜线条 ${selected.lineWidth}px · 共 ${annotationState.items.length} 个标注`);
+  annotationStatusText(`放大镜线条 ${width}px · 共 ${annotationState.items.length} 个标注`);
+}
+
+function updateAnnotationNumberSize() {
+  const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
+  const size = Number(annotationControl("NumberSize").value);
+  annotationState.numberSize = size;
+  annotationState.items
+    .filter(item => item.type === "number")
+    .forEach(item => {
+      item.size = size;
+      clampAnnotationItem(item);
+    });
+  annotationControl("NumberSizeValue").textContent = `${size}px`;
+  renderAnnotationCanvas();
+  annotationStatusText(`全部序号大小 ${size}px · 共 ${annotationState.items.length} 个标注`);
 }
 
 function updateAnnotationBlurStrength() {
   const selected = annotationState.items.find(item => item.id === annotationState.selectedId);
-  if (selected?.type !== "blur") return;
-  selected.strength = Number($("#annotationBlurStrength").value);
-  $("#annotationBlurStrengthValue").textContent = `${selected.strength}px`;
+  const strength = Number(annotationControl("BlurStrength").value);
+  annotationState.blurStrength = strength;
+  if (selected?.type === "blur") selected.strength = strength;
+  annotationControl("BlurStrengthValue").textContent = `${strength}px`;
   renderAnnotationCanvas();
-  annotationStatusText(`模糊强度 ${selected.strength}px · 共 ${annotationState.items.length} 个标注`);
+  annotationStatusText(`模糊强度 ${strength}px · 共 ${annotationState.items.length} 个标注`);
+}
+
+function updateBgAnnotationColor(kind, color) {
+  annotationState = bgAnnotationState;
+  const normalized = String(color || "#98b2c0").toLowerCase();
+  const stateKey = {
+    mask: "maskColor",
+    number: "numberColor",
+    magnifier: "magnifierColor",
+  }[kind];
+  if (!stateKey) return;
+  annotationState[stateKey] = normalized;
+  selectedAnnotationItems()
+    .filter(item => item.type === kind)
+    .forEach(item => { item.color = normalized; });
+  updateBgAnnotationControls();
+  renderAnnotationCanvas(true);
+  const label = { mask: "遮挡颜色", number: "序号颜色", magnifier: "线条颜色" }[kind];
+  annotationStatusText(`${label} ${normalized.toUpperCase()} · 共 ${annotationState.items.length} 个标注`);
+}
+
+function updateBgAnnotationShadow(kind, enabled) {
+  annotationState = bgAnnotationState;
+  annotationState.shadows[kind] = Boolean(enabled);
+  selectedAnnotationItems()
+    .filter(item => item.type === kind)
+    .forEach(item => { item.shadow = Boolean(enabled); });
+  updateBgAnnotationControls();
+  renderAnnotationCanvas(true);
+  annotationStatusText(`${enabled ? "已开启" : "已关闭"}阴影效果 · 共 ${annotationState.items.length} 个标注`);
+}
+
+function updateBgAnnotationMaskRound() {
+  annotationState = bgAnnotationState;
+  const enabled = $("#bgAnnotationMaskRound").checked;
+  annotationState.maskRound = enabled;
+  selectedAnnotationItems()
+    .filter(item => item.type === "mask")
+    .forEach(item => { item.round = enabled; });
+  updateBgAnnotationControls();
+  renderAnnotationCanvas(true);
+  annotationStatusText(`${enabled ? "已开启" : "已关闭"}圆角效果 · 共 ${annotationState.items.length} 个标注`);
+}
+
+function updateBgAnnotationMaskRadius() {
+  annotationState = bgAnnotationState;
+  const radius = Number($("#bgAnnotationMaskRoundRadius").value);
+  annotationState.maskRoundRadius = radius;
+  selectedAnnotationItems()
+    .filter(item => item.type === "mask")
+    .forEach(item => { item.cornerRadius = radius; });
+  $("#bgAnnotationMaskRoundRadiusValue").textContent = `${radius} px`;
+  renderAnnotationCanvas(true);
+  annotationStatusText(`遮挡圆角 ${radius}px · 共 ${annotationState.items.length} 个标注`);
 }
 
 function finishAnnotationChange(message) {
@@ -3964,6 +5313,7 @@ function deleteSelectedAnnotation() {
   annotationState.items = annotationState.items.filter(item => !ids.has(item.id));
   annotationState.selectedId = null;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   finishAnnotationChange(`已删除 ${ids.size} 个标注`);
 }
 
@@ -3974,6 +5324,24 @@ function annotationPointerPosition(event) {
     x: (event.clientX - rect.left) * canvas.width / rect.width,
     y: (event.clientY - rect.top) * canvas.height / rect.height,
   };
+}
+
+function pointInsideCanvasClientRect(event, canvas = annotationCanvas()) {
+  const rect = canvas.getBoundingClientRect();
+  return event.clientX >= rect.left && event.clientX <= rect.right &&
+    event.clientY >= rect.top && event.clientY <= rect.bottom;
+}
+
+function nativeAnnotationStagePointerDown(event) {
+  annotationState = nativeAnnotationState;
+  const hit = (() => {
+    if (!annotationState.items.length) return false;
+    const point = annotationPointerPosition(event);
+    return selectedAnnotationItems().some(item => hitAnnotationHandle(item, point)) ||
+      annotationState.items.some(item => pointInAnnotationItem(item, point));
+  })();
+  if (!pointInsideCanvasClientRect(event) && !hit) return;
+  annotationPointerDown(event);
 }
 
 function annotationResizeHandles(item) {
@@ -3991,18 +5359,37 @@ function annotationResizeHandles(item) {
 
 function hitAnnotationHandle(item, point) {
   if (item?.type === "magnifier") {
-    const canvas = annotationCanvas();
-    const rect = canvas.getBoundingClientRect();
-    const tolerance = 12 * canvas.width / Math.max(1, rect.width);
-    const lensDistance = Math.abs(Math.hypot(point.x - item.lensX, point.y - item.lensY) - item.lensRadius);
-    if (lensDistance <= tolerance) return "magnifier-lens";
-    const sourceDistance = Math.abs(Math.hypot(point.x - item.sourceX, point.y - item.sourceY) - item.sourceRadius);
-    if (sourceDistance <= tolerance) return "magnifier-source";
+    const part = [...selectedMagnifierParts(item)].reverse().find(candidate => {
+      const handle = hitSelectionHandle(
+        selectionFrameBounds(annotationCanvas(), magnifierPartBounds(item, candidate)),
+        point,
+        annotationCanvas(),
+        12
+      );
+      return ["nw", "ne", "se", "sw"].includes(handle);
+    });
+    if (part) {
+      const handle = hitSelectionHandle(
+        selectionFrameBounds(annotationCanvas(), magnifierPartBounds(item, part)),
+        point,
+        annotationCanvas(),
+        12
+      );
+      return `magnifier-${part}-${handle}`;
+    }
     return null;
+  }
+  if (item?.type === "number") {
+    return hitSelectionHandle(
+      selectionFrameBounds(annotationCanvas(), annotationItemBounds(item)),
+      point,
+      annotationCanvas(),
+      12
+    );
   }
   if (item?.type !== "mask" && item?.type !== "blur") return null;
   return hitSelectionHandle(
-    { x: item.x, y: item.y, width: item.width, height: item.height },
+    selectionFrameBounds(annotationCanvas(), annotationItemBounds(item)),
     point,
     annotationCanvas(),
     12
@@ -4011,13 +5398,24 @@ function hitAnnotationHandle(item, point) {
 
 function pointInAnnotationItem(item, point) {
   if (item.type === "number") {
-    return Math.hypot(point.x - item.x, point.y - item.y) <= ANNOTATION_NUMBER_SIZE / 2;
+    return Math.hypot(point.x - item.x, point.y - item.y) <=
+      annotationNumberSize(item) / 2 + canvasDisplayUnit(annotationCanvas());
   }
   if (item.type === "magnifier") {
-    return Boolean(magnifierPartAtPoint(item, point));
+    const margin = magnifierStrokeMargin(item) + canvasDisplayUnit(annotationCanvas());
+    if (Math.hypot(point.x - item.lensX, point.y - item.lensY) <= item.lensRadius + margin) {
+      return true;
+    }
+    return Math.hypot(point.x - item.sourceX, point.y - item.sourceY) <= item.sourceRadius + margin;
   }
-  return point.x >= item.x && point.x <= item.x + item.width &&
-    point.y >= item.y && point.y <= item.y + item.height;
+  const bounds = selectionFrameBounds(annotationCanvas(), {
+    x: item.x,
+    y: item.y,
+    width: item.width,
+    height: item.height,
+  });
+  return point.x >= bounds.x && point.x <= bounds.x + bounds.width &&
+    point.y >= bounds.y && point.y <= bounds.y + bounds.height;
 }
 
 function magnifierPartAtPoint(item, point) {
@@ -4035,13 +5433,16 @@ function annotationPointerDown(event) {
   const existingAtPoint = [...annotationState.items]
     .reverse()
     .find(candidate => pointInAnnotationItem(candidate, point));
+  const existingPart = existingAtPoint?.type === "magnifier"
+    ? magnifierPartAtPoint(existingAtPoint, point)
+    : null;
   if (["number", "mask", "blur", "magnifier"].includes(annotationState.mode) && existingAtPoint) {
     annotationState.mode = "view";
     annotationStatusText("已点中现有标注，并自动切换到查看模式。");
   }
   if (annotationState.mode === "number") {
     addAnnotationNumberAt(point);
-    $("#annotationStage").focus();
+    annotationStage().focus();
     event.preventDefault();
     return;
   }
@@ -4053,19 +5454,30 @@ function annotationPointerDown(event) {
       y: point.y,
       width: 0,
       height: 0,
-      ...(annotationState.mode === "blur" ? { strength: 16 } : {}),
+      ...(annotationState.mode === "blur"
+        ? {
+            strength: annotationState.blurStrength || 16,
+            shadow: Boolean(annotationState.shadows.blur),
+          }
+        : {
+            color: annotationState.maskColor || "#98b2c0",
+            shadow: Boolean(annotationState.shadows.mask),
+            round: Boolean(annotationState.maskRound),
+            cornerRadius: annotationState.maskRoundRadius || 16,
+          }),
     };
     annotationState.items.push(item);
     annotationState.selectedId = item.id;
     annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
     annotationState.interaction = {
       mode: "create",
       id: item.id,
       start: point,
       original: { ...item },
     };
-    canvas.setPointerCapture?.(event.pointerId);
-    $("#annotationStage").focus();
+    annotationStage().setPointerCapture?.(event.pointerId);
+    annotationStage().focus();
     updateAnnotationControls();
     renderAnnotationCanvas();
     event.preventDefault();
@@ -4081,20 +5493,40 @@ function annotationPointerDown(event) {
       lensX: point.x,
       lensY: point.y,
       lensRadius: 0,
-      color: ANNOTATION_MAGNIFIER_COLOR,
-      lineWidth: ANNOTATION_MAGNIFIER_LINE_WIDTH,
+      color: annotationState.magnifierColor || ANNOTATION_MAGNIFIER_COLOR,
+      lineWidth: annotationState.magnifierWidth || ANNOTATION_MAGNIFIER_LINE_WIDTH,
+      shadow: Boolean(annotationState.shadows.magnifier),
     };
     annotationState.items.push(item);
     annotationState.selectedId = item.id;
     annotationState.selectedIds = [];
+    annotationState.selectedPart = "source";
     annotationState.interaction = {
       mode: "create-magnifier",
       id: item.id,
       start: point,
       original: { ...item },
     };
-    canvas.setPointerCapture?.(event.pointerId);
-    $("#annotationStage").focus();
+    annotationStage().setPointerCapture?.(event.pointerId);
+    annotationStage().focus();
+    updateAnnotationControls();
+    renderAnnotationCanvas();
+    event.preventDefault();
+    return;
+  }
+  if (annotationState.mode === "view" && !existingAtPoint && annotationState.zoom > 1.001) {
+    const stage = annotationStage();
+    annotationState.selectedId = null;
+    annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
+    annotationState.interaction = {
+      mode: "pan-canvas",
+      startClient: { x: event.clientX, y: event.clientY },
+      startScroll: { left: stage.scrollLeft, top: stage.scrollTop },
+    };
+    setAnnotationCursor("grabbing");
+    annotationStage().setPointerCapture?.(event.pointerId);
+    stage.focus();
     updateAnnotationControls();
     renderAnnotationCanvas();
     event.preventDefault();
@@ -4112,19 +5544,25 @@ function annotationPointerDown(event) {
       else ids.delete(item.id);
       annotationState.selectedIds = [...ids];
       annotationState.selectedId = adding ? item.id : (annotationState.selectedIds.at(-1) ?? null);
+      const primaryItem = annotationState.items.find(candidate => candidate.id === annotationState.selectedId);
+      annotationState.selectedPart = primaryItem?.type === "magnifier"
+        ? (adding && primaryItem.id === item.id ? magnifierPartAtPoint(item, point) : null)
+        : null;
       const updatedSelection = selectedAnnotationItems();
       annotationState.interaction = adding ? {
         mode: updatedSelection.length > 1 ? "move-group" : "move",
         id: item.id,
+        part: item.type === "magnifier" ? magnifierPartAtPoint(item, point) : null,
         start: point,
         original: { ...item },
         originals: updatedSelection.map(candidate => ({ ...candidate })),
       } : null;
     } else {
       annotationState.interaction = null;
+      annotationState.selectedPart = null;
     }
-    canvas.setPointerCapture?.(event.pointerId);
-    $("#annotationStage").focus();
+    annotationStage().setPointerCapture?.(event.pointerId);
+    annotationStage().focus();
     updateAnnotationControls();
     renderAnnotationCanvas();
     event.preventDefault();
@@ -4135,22 +5573,41 @@ function annotationPointerDown(event) {
     .map(candidate => ({ item: candidate, handle: hitAnnotationHandle(candidate, point) }))
     .find(candidate => candidate.handle);
   if (handleTarget) {
+    annotationState.selectedId = handleTarget.item.id;
+    annotationState.selectedIds = [];
+    annotationState.selectedPart = handleTarget.item.type === "magnifier"
+      ? handleTarget.handle.split("-")[1]
+      : null;
+    const magnifierHandle = handleTarget.item.type === "magnifier"
+      ? handleTarget.handle.split("-")[2]
+      : null;
     annotationState.interaction = {
-      mode: handleTarget.item.type === "magnifier" ? "resize-magnifier" : "resize",
+      mode: handleTarget.item.type === "magnifier"
+        ? "resize-magnifier"
+        : handleTarget.item.type === "number"
+          ? "resize-number"
+          : "resize",
       id: handleTarget.item.id,
-      handle: handleTarget.handle,
+      handle: handleTarget.item.type === "magnifier"
+        ? `magnifier-${annotationState.selectedPart}`
+        : handleTarget.handle,
+      resizeHandle: magnifierHandle,
       start: point,
       original: { ...handleTarget.item },
     };
   } else {
     const item = existingAtPoint ||
       [...annotationState.items].reverse().find(candidate => pointInAnnotationItem(candidate, point));
+    const clickedPart = item?.type === "magnifier"
+      ? magnifierPartAtPoint(item, point)
+      : null;
     const movingSelection = item && selectedItems.some(candidate => candidate.id === item.id);
     if (!movingSelection) {
       annotationState.selectedId = item?.id ?? null;
       annotationState.selectedIds = [];
     }
-    if (item && !movingSelection) {
+    annotationState.selectedPart = clickedPart;
+    if (item) {
       const itemIndex = annotationState.items.findIndex(candidate => candidate.id === item.id);
       if (itemIndex >= 0 && itemIndex < annotationState.items.length - 1) {
         annotationState.items.splice(itemIndex, 1);
@@ -4160,7 +5617,7 @@ function annotationPointerDown(event) {
     annotationState.interaction = item ? {
       mode: movingSelection && selectedItems.length > 1 ? "move-group" : "move",
       id: item.id,
-      part: item.type === "magnifier" ? magnifierPartAtPoint(item, point) : null,
+      part: clickedPart,
       start: point,
       original: { ...item },
       originals: movingSelection
@@ -4168,8 +5625,8 @@ function annotationPointerDown(event) {
         : null,
     } : null;
   }
-  canvas.setPointerCapture?.(event.pointerId);
-  $("#annotationStage").focus();
+  annotationStage().setPointerCapture?.(event.pointerId);
+  annotationStage().focus();
   updateAnnotationControls();
   renderAnnotationCanvas();
   event.preventDefault();
@@ -4185,14 +5642,19 @@ function moveAnnotationItem(item, interaction, point) {
     item[xKey] = interaction.original[xKey] + dx;
     item[yKey] = interaction.original[yKey] + dy;
     clampAnnotationItem(item);
-    annotationState.snapGuides = emptySnapGuides();
+    const bounds = magnifierVisualBounds(item, part);
+    const snapped = snapBoundsToCanvas(bounds, annotationCanvas(), 10, true);
+    item[xKey] += snapped.x - bounds.x;
+    item[yKey] += snapped.y - bounds.y;
+    clampAnnotationItem(item);
+    annotationState.snapGuides = snapped.guides;
     return;
   }
   item.x = interaction.original.x + dx;
   item.y = interaction.original.y + dy;
   clampAnnotationItem(item);
   const canvas = annotationCanvas();
-  const bounds = annotationItemBounds(item);
+  const bounds = selectionFrameBounds(canvas, annotationItemBounds(item));
   const snapped = snapBoundsToCanvas(bounds, canvas, 10, true);
   const offsetX = snapped.x - bounds.x;
   const offsetY = snapped.y - bounds.y;
@@ -4220,25 +5682,58 @@ function resizeAnnotationMagnifier(item, interaction, point) {
   const radiusKey = source ? "sourceRadius" : "lensRadius";
   const canvas = annotationCanvas();
   const minimumRadius = Math.min(20, canvas.width / 4, canvas.height / 4);
+  const edgeMargin = magnifierStrokeMargin(item);
   const maximumRadius = Math.max(
     minimumRadius,
     Math.min(
-      interaction.original[xKey],
-      canvas.width - interaction.original[xKey],
-      interaction.original[yKey],
-      canvas.height - interaction.original[yKey]
+      interaction.original[xKey] - edgeMargin,
+      canvas.width - interaction.original[xKey] - edgeMargin,
+      interaction.original[yKey] - edgeMargin,
+      canvas.height - interaction.original[yKey] - edgeMargin
     )
   );
+  const margin = magnifierSelectionMargin(item);
+  const candidateRadius = interaction.resizeHandle
+    ? Math.max(Math.abs(point.x - interaction.original[xKey]), Math.abs(point.y - interaction.original[yKey])) - margin
+    : Math.hypot(point.x - interaction.original[xKey], point.y - interaction.original[yKey]);
   item[radiusKey] = Math.max(
     minimumRadius,
-    Math.min(maximumRadius, Math.hypot(point.x - interaction.original[xKey], point.y - interaction.original[yKey]))
+    Math.min(maximumRadius, candidateRadius)
   );
   clampAnnotationItem(item);
   annotationState.snapGuides = emptySnapGuides();
 }
 
+function resizeAnnotationNumber(item, interaction, point) {
+  const canvas = annotationCanvas();
+  const maximum = Math.max(40, Math.min(240, canvas.width, canvas.height));
+  const outset = annotationShadowOutset(item);
+  const size = Math.max(
+    40,
+    Math.min(
+      maximum,
+      Math.max(0, Math.max(Math.abs(point.x - item.x), Math.abs(point.y - item.y)) - outset) * 2
+    )
+  );
+  annotationState.numberSize = Math.round(size / 2) * 2;
+  annotationState.items
+    .filter(candidate => candidate.type === "number")
+    .forEach(candidate => {
+      candidate.size = annotationState.numberSize;
+      clampAnnotationItem(candidate);
+    });
+  annotationControl("NumberSize").value = String(annotationState.numberSize);
+  annotationControl("NumberSizeValue").textContent = `${annotationState.numberSize}px`;
+  annotationState.snapGuides = emptySnapGuides();
+}
+
 function resizeAnnotationMask(item, interaction, point, event) {
   const canvas = annotationCanvas();
+  const outset = annotationShadowOutset(item);
+  point = {
+    x: point.x + (interaction.handle.includes("w") ? outset : interaction.handle.includes("e") ? -outset : 0),
+    y: point.y + (interaction.handle.includes("n") ? outset : interaction.handle.includes("s") ? -outset : 0),
+  };
   const rect = canvas.getBoundingClientRect();
   const toleranceX = 10 * canvas.width / Math.max(1, rect.width);
   const toleranceY = 10 * canvas.height / Math.max(1, rect.height);
@@ -4271,7 +5766,7 @@ function annotationPointerMove(event) {
   if (!interaction) {
     if (!annotationState.image) return;
     if (["number", "mask", "blur", "magnifier"].includes(annotationState.mode)) {
-      annotationCanvas().style.cursor = "crosshair";
+      setAnnotationCursor("crosshair");
       return;
     }
     const point = annotationPointerPosition(event);
@@ -4280,8 +5775,19 @@ function annotationPointerMove(event) {
       .reverse()
       .map(item => hitAnnotationHandle(item, point))
       .find(Boolean);
-    annotationCanvas().style.cursor = (handle?.startsWith("magnifier-") ? "nwse-resize" : selectionCursorByHandle[handle]) ||
-      (selectedItems.some(item => pointInAnnotationItem(item, point)) ? "move" : "default");
+    const cursorHandle = handle?.startsWith("magnifier-") ? handle.split("-").at(-1) : handle;
+    const itemAtPoint = [...annotationState.items].reverse().find(item => pointInAnnotationItem(item, point));
+    setAnnotationCursor(
+      selectionCursorByHandle[cursorHandle] ||
+      (itemAtPoint ? "move" : annotationState.zoom > 1.001 ? "grab" : "default")
+    );
+    return;
+  }
+  if (interaction.mode === "pan-canvas") {
+    const stage = annotationStage();
+    stage.scrollLeft = interaction.startScroll.left - (event.clientX - interaction.startClient.x);
+    stage.scrollTop = interaction.startScroll.top - (event.clientY - interaction.startClient.y);
+    event.preventDefault();
     return;
   }
   const item = annotationState.items.find(candidate => candidate.id === interaction.id);
@@ -4311,17 +5817,11 @@ function annotationPointerMove(event) {
     const selection = selectionFromPoints(interaction.start, point, event.shiftKey);
     Object.assign(item, selection);
   } else if (interaction.mode === "create-magnifier") {
-    const canvas = annotationCanvas();
     const sourceRadius = Math.hypot(point.x - interaction.start.x, point.y - interaction.start.y);
     item.sourceX = interaction.start.x;
     item.sourceY = interaction.start.y;
     item.sourceRadius = sourceRadius;
-    item.lensRadius = Math.max(80, sourceRadius * 2);
-    const gap = Math.max(28, item.lineWidth * 3);
-    const diagonal = (sourceRadius + item.lensRadius + gap) / Math.sqrt(2);
-    item.lensX = item.sourceX + diagonal;
-    item.lensY = item.sourceY + diagonal;
-    clampAnnotationItem(item);
+    item.lensRadius = 0;
     annotationState.snapGuides = emptySnapGuides();
   } else if (interaction.mode === "move-group") {
     const dx = point.x - interaction.start.x;
@@ -4332,7 +5832,7 @@ function annotationPointerMove(event) {
       translateAnnotationItem(candidate, original, dx, dy);
     });
     const canvas = annotationCanvas();
-    const bounds = annotationSelectionBounds();
+    const bounds = selectionFrameBounds(canvas, annotationSelectionBounds());
     const snapped = snapBoundsToCanvas(bounds, canvas, 10, true);
     const offsetX = snapped.x - bounds.x;
     const offsetY = snapped.y - bounds.y;
@@ -4346,6 +5846,8 @@ function annotationPointerMove(event) {
     moveAnnotationItem(item, interaction, point);
   } else if (interaction.mode === "resize-magnifier") {
     resizeAnnotationMagnifier(item, interaction, point);
+  } else if (interaction.mode === "resize-number") {
+    resizeAnnotationNumber(item, interaction, point);
   } else {
     resizeAnnotationMask(item, interaction, point, event);
   }
@@ -4358,14 +5860,20 @@ function annotationPointerUp(event) {
   const interaction = annotationState.interaction;
   const snapped = annotationState.snapGuides.vertical.length || annotationState.snapGuides.horizontal.length;
   annotationState.interaction = null;
-  annotationCanvas().releasePointerCapture?.(event.pointerId);
+  annotationStage().releasePointerCapture?.(event.pointerId);
   annotationState.snapGuides = emptySnapGuides();
+  if (interaction.mode === "pan-canvas") {
+    setAnnotationCursor(annotationState.zoom > 1.001 ? "grab" : "default");
+    annotationStatusText(`查看模式 · 画布缩放 ${Math.round(annotationState.zoom * 100)}%`);
+    return;
+  }
   if (interaction.mode === "create") {
     const item = annotationState.items.find(candidate => candidate.id === interaction.id);
     if (!item || item.width < 2 || item.height < 2) {
       annotationState.items = annotationState.items.filter(candidate => candidate.id !== interaction.id);
       annotationState.selectedId = null;
       annotationState.selectedIds = [];
+      annotationState.selectedPart = null;
       renderAnnotationCanvas();
       updateAnnotationControls();
       annotationStatusText("框选范围太小，未创建标注；当前创建模式保持不变。");
@@ -4378,11 +5886,17 @@ function annotationPointerUp(event) {
       annotationState.items = annotationState.items.filter(candidate => candidate.id !== interaction.id);
       annotationState.selectedId = null;
       annotationState.selectedIds = [];
+      annotationState.selectedPart = null;
       renderAnnotationCanvas();
       updateAnnotationControls();
       annotationStatusText("放大范围太小，未创建放大镜；当前创建模式保持不变。");
       return;
     }
+    item.lensRadius = Math.max(80, item.sourceRadius * 2);
+    const gap = Math.max(28, item.lineWidth * 3);
+    const diagonal = (item.sourceRadius + item.lensRadius + gap) / Math.sqrt(2);
+    item.lensX = item.sourceX + diagonal;
+    item.lensY = item.sourceY + diagonal;
     clampAnnotationItem(item);
   }
   renderAnnotationCanvas();
@@ -4393,7 +5907,7 @@ function annotationPointerUp(event) {
 
 function setAnnotationZoomAtPoint(nextZoom, clientX, clientY) {
   const canvas = annotationCanvas();
-  const stage = $("#annotationStage");
+  const stage = annotationStage();
   const before = canvas.getBoundingClientRect();
   const relativeX = before.width ? Math.max(0, Math.min(1, (clientX - before.left) / before.width)) : 0.5;
   const relativeY = before.height ? Math.max(0, Math.min(1, (clientY - before.top) / before.height)) : 0.5;
@@ -4437,6 +5951,7 @@ function annotationDoubleClick(event) {
   event.preventDefault();
   annotationState.selectedId = item.id;
   annotationState.selectedIds = [];
+  annotationState.selectedPart = null;
   annotationState.editingNumberId = item.id;
   $("#annotationNumberInput").value = String(item.number);
   updateAnnotationControls();
@@ -4448,7 +5963,7 @@ function annotationDoubleClick(event) {
 function closeAnnotationNumberEditor() {
   annotationState.editingNumberId = null;
   updateAnnotationControls();
-  $("#annotationStage").focus();
+  annotationStage().focus();
 }
 
 function confirmAnnotationNumberEdit() {
@@ -4468,7 +5983,7 @@ function confirmAnnotationNumberEdit() {
   annotationState.nextNumber = Math.max(annotationState.nextNumber, item.number + 1);
   annotationState.editingNumberId = null;
   finishAnnotationChange(`序号已修改为 ${item.number}`);
-  $("#annotationStage").focus();
+  annotationStage().focus();
 }
 
 function annotationKeyDown(event) {
@@ -5536,13 +7051,13 @@ function enterActiveImageModuleView() {
   } else if (moduleId === "imageEditor" && imageEditorState.hasImage) {
     setImageEditorMode("view");
   } else if (moduleId === "bg") {
+    annotationState = bgAnnotationState;
+    closeBgBackgroundPanel();
     blueBgState.interaction = null;
-    blueBgState.selectedId = null;
-    blueBgState.selectedIds = [];
     blueBgState.snapGuides = emptySnapGuides();
     renderBlueBgCanvas();
     updateBlueBgControls();
-    blueBgStatus("查看模式");
+    blueBgStatus("移动模式：点选前景图后可拖动位置或调整大小。");
   }
 }
 
@@ -5550,7 +7065,7 @@ const IMAGE_ZOOM_STEPS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4, 6, 8, 12, 16, 20,
 ];
 
-function steppedImageZoom(current, direction, minimum = 0.25) {
+function steppedImageZoom(current, direction, minimum = 0.5) {
   const steps = IMAGE_ZOOM_STEPS.filter(value => value >= minimum);
   if (direction > 0) {
     return steps.find(value => value > current + 0.001) ?? steps.at(-1);
@@ -5563,9 +7078,9 @@ function stepActiveImageModuleZoom(direction) {
   let stage;
   let nextZoom;
   let apply;
-  if (moduleId === "bg" && $("#bgBlueMode").checked && blueBgState.background) {
+  if (moduleId === "bg" && blueBgState.canvasWidth) {
     stage = $("#blueBgStage");
-    nextZoom = steppedImageZoom(blueBgState.zoom, direction, 1);
+    nextZoom = steppedImageZoom(blueBgState.zoom, direction);
     apply = setBlueBgZoomAtPoint;
   } else if (moduleId === "annotation" && annotationState.image) {
     stage = $("#annotationStage");
@@ -5586,13 +7101,27 @@ function stepActiveImageModuleZoom(direction) {
 
 function selectAllInActiveImageTool() {
   const moduleId = activeImageModuleId();
-  if (moduleId === "bg" && $("#bgBlueMode").checked && blueBgState.layers.length) {
+  if (
+    moduleId === "bg" &&
+    $("#bgBlueMode").checked &&
+    (blueBgState.layers.length || bgAnnotationState.items.length)
+  ) {
     blueBgState.selectedIds = blueBgState.layers.map(layer => layer.id);
     blueBgState.selectedId = blueBgState.selectedIds.at(-1) ?? null;
+    blueBgState.toolMode = "move";
+    blueBgState.interaction = null;
+    blueBgState.snapGuides = emptySnapGuides();
+    bgAnnotationState.selectedIds = bgAnnotationState.items.map(item => item.id);
+    bgAnnotationState.selectedId = bgAnnotationState.selectedIds.at(-1) ?? null;
+    bgAnnotationState.selectedPart = null;
+    bgAnnotationState.mode = "view";
+    bgAnnotationState.interaction = null;
+    bgAnnotationState.snapGuides = emptySnapGuides();
+    setBgInspectorMode("effects");
     updateBlueBgControls();
     renderBlueBgCanvas();
     $("#blueBgStage").focus();
-    blueBgStatus(`已全选 ${blueBgState.selectedIds.length} 层前景图。`);
+    blueBgStatus(`已全选 ${blueBgState.selectedIds.length} 张前景图和 ${bgAnnotationState.selectedIds.length} 个标注。`);
     return true;
   }
   if (moduleId === "bg" && !$("#bgBlueMode").checked && bgMaterials.length) {
@@ -5608,6 +7137,7 @@ function selectAllInActiveImageTool() {
   if (moduleId === "annotation" && annotationState.image && annotationState.items.length) {
     annotationState.selectedIds = annotationState.items.map(item => item.id);
     annotationState.selectedId = annotationState.selectedIds.at(-1) ?? null;
+    annotationState.selectedPart = null;
     annotationState.mode = "view";
     annotationState.interaction = null;
     annotationState.snapGuides = emptySnapGuides();
@@ -5653,6 +7183,7 @@ function selectAllInActiveImageTool() {
     annotationState.items.push(item);
     annotationState.selectedId = item.id;
     annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
     finishAnnotationChange(
       annotationState.mode === "blur" ? "已全选图像并创建高斯模糊" : "已全选图像并创建遮挡块"
     );
@@ -5698,18 +7229,70 @@ function imageModuleGlobalKeyDown(event) {
     exportActiveImageModule();
     return;
   }
+  if (commandKey && event.key.toLowerCase() === "d") {
+    event.preventDefault();
+    deselectActiveImageModule(moduleId);
+    return;
+  }
   if (editing) return;
   if (commandKey && event.key.toLowerCase() === "a" && selectAllInActiveImageTool()) {
     event.preventDefault();
     return;
   }
   if (event.defaultPrevented) return;
+  const plainKey = !event.metaKey && !event.ctrlKey && !event.altKey
+    ? event.key.toLowerCase()
+    : "";
+  if (plainKey === "i") {
+    const input = moduleId === "bg"
+      ? $("#bgFiles")
+      : moduleId === "annotation"
+        ? $("#annotationFile")
+        : moduleId === "imageEditor"
+          ? $("#imageEditorFile")
+          : null;
+    if (input) {
+      event.preventDefault();
+      input.click();
+      return;
+    }
+  }
+  if (moduleId === "bg") {
+    const bgShortcuts = {
+      b: openBgBackgroundDialog,
+      n: () => activateBgAnnotationMode("number"),
+      m: () => activateBgAnnotationMode("mask"),
+      f: () => activateBgAnnotationMode("blur"),
+      g: () => activateBgAnnotationMode("magnifier"),
+    };
+    const action = bgShortcuts[plainKey];
+    if (action) {
+      event.preventDefault();
+      action();
+      return;
+    }
+  }
+  if (moduleId === "imageEditor" && imageEditorState.hasImage) {
+    const imageEditorShortcuts = {
+      r: () => setImageEditorMode("remove"),
+      c: () => setImageEditorMode("crop"),
+      g: () => setImageEditorMode("gradient"),
+      s: () => setImageEditorMode("split"),
+      b: () => setImageEditorMode("blend"),
+      w: suggestImageEditorWindow,
+    };
+    const action = imageEditorShortcuts[plainKey];
+    if (action) {
+      event.preventDefault();
+      action();
+      return;
+    }
+  }
   if (moduleId === "annotation" && !event.metaKey && !event.ctrlKey && !event.altKey) {
     const annotationShortcuts = {
-      i: () => $("#annotationFile").click(),
       n: () => setAnnotationMode("number"),
       m: () => setAnnotationMode("mask"),
-      b: () => setAnnotationMode("blur"),
+      f: () => setAnnotationMode("blur"),
       g: () => setAnnotationMode("magnifier"),
     };
     const action = annotationShortcuts[event.key.toLowerCase()];
@@ -5739,6 +7322,43 @@ function imageModuleGlobalKeyDown(event) {
     event.preventDefault();
     enterActiveImageModuleView();
   }
+}
+
+function deselectActiveImageModule(moduleId = activeImageModuleId()) {
+  if (moduleId === "bg") {
+    const hasSelection = blueBgState.selectedId !== null || blueBgState.selectedIds.length ||
+      bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length || bgAnnotationState.selectedPart;
+    if (!hasSelection) return false;
+    clearAllBgCanvasSelections();
+    updateBlueBgControls();
+    renderBlueBgCanvas();
+    blueBgStatus("已取消框选。");
+    return true;
+  }
+  if (moduleId === "annotation") {
+    if (!annotationState.selectedId && !annotationState.selectedIds.length && !annotationState.selectedPart) return false;
+    annotationState.selectedId = null;
+    annotationState.selectedIds = [];
+    annotationState.selectedPart = null;
+    annotationState.interaction = null;
+    annotationState.snapGuides = emptySnapGuides();
+    annotationState.editingNumberId = null;
+    updateAnnotationControls();
+    renderAnnotationCanvas();
+    annotationStatusText("已取消框选。");
+    return true;
+  }
+  if (moduleId === "imageEditor") {
+    if (imageEditorState.selection) {
+      cancelImageEditorSelection();
+      return true;
+    }
+    if (imageEditorState.gradient) {
+      cancelImageEditorGradient();
+      return true;
+    }
+  }
+  return false;
 }
 
 function bind() {
@@ -5812,31 +7432,63 @@ function bind() {
   };
   $("#makeShort").onclick = () => makeShort("shorturl").catch(err => $("#shortResult").textContent = err.message);
   $("#expandShort").onclick = () => makeShort("expand").catch(err => $("#shortResult").textContent = err.message);
-  $("#bgModeToggleButton").onclick = () => setBgMode(!$("#bgBlueMode").checked);
-  $("#bgImportButton").onclick = () => $("#bgFiles").click();
-  $("#bgUndo").onclick = () => restoreBgHistory(bgHistoryIndex - 1);
-  $("#bgRedo").onclick = () => restoreBgHistory(bgHistoryIndex + 1);
-  $("#bgExportButton").onclick = () => {
-    if ($("#bgBlueMode").checked) confirmBlueBgRender();
-    else batchDownloadBgResults();
+  $("#bgImportButton").onclick = () => {
+    closeBgBackgroundPanel();
+    $("#bgFiles").click();
   };
+  $("#bgBackgroundButton").onclick = openBgBackgroundDialog;
+  $("#bgBackgroundFile").onchange = () => {
+    if (!$("#bgBackgroundFile").files?.length) return;
+    $("#bgBackgroundType").value = "image";
+    applyBgBackgroundFromTiles();
+  };
+  $("#bgBackgroundColor").onchange = () => {
+    $("#bgBackgroundType").value = "solid";
+    localStorage.setItem(BG_CUSTOM_COLOR_KEY, $("#bgBackgroundColor").value);
+    applyBgBackgroundFromTiles();
+  };
+  $("#bgBackgroundDialog").onclick = event => {
+    const customTile = event.target.closest("[data-bg-custom]");
+    if (customTile) {
+      $("#bgBackgroundFile").click();
+      return;
+    }
+    const backgroundTile = event.target.closest("[data-bg-type]");
+    if (backgroundTile) {
+      $("#bgBackgroundType").value = backgroundTile.dataset.bgType;
+      if (backgroundTile.dataset.bgGradient) $("#bgBackgroundGradient").value = backgroundTile.dataset.bgGradient;
+      if (backgroundTile.dataset.bgWallpaper) $("#bgWallpaperSelect").value = backgroundTile.dataset.bgWallpaper;
+      applyBgBackgroundFromTiles();
+      return;
+    }
+    const aspectTile = event.target.closest("[data-bg-aspect]");
+    if (aspectTile) {
+      $("#bgCanvasAspect").value = aspectTile.dataset.bgAspect;
+      applyBgBackgroundFromTiles();
+    }
+  };
+  $("#bgUndo").onclick = () => {
+    closeBgBackgroundPanel();
+    restoreBgHistory(bgHistoryIndex - 1);
+  };
+  $("#bgRedo").onclick = () => {
+    closeBgBackgroundPanel();
+    restoreBgHistory(bgHistoryIndex + 1);
+  };
+  $("#bgExportButton").onclick = () => {
+    closeBgBackgroundPanel();
+    confirmBlueBgRender();
+  };
+  $("#bgViewMode").onclick = enterActiveImageModuleView;
   $("#bgFiles").onchange = event => {
     importBgFiles(event.target.files).catch(err => alert(err.message));
     event.target.value = "";
   };
   $("#bgMaterialList").onclick = event => {
-    const blueLayer = event.target.closest("[data-blue-layer-id]");
     const material = event.target.closest("[data-bg-material-index]");
-    if (blueLayer) {
-      blueBgState.selectedId = Number(blueLayer.dataset.blueLayerId);
-      blueBgState.selectedIds = [];
-      updateBlueBgControls();
-      renderBlueBgCanvas();
-    } else if (material) {
+    if (material) {
       const index = Number(material.dataset.bgMaterialIndex);
-      if (event.metaKey || event.ctrlKey) toggleDefaultBgMaterialSelection(index);
-      else openBgMaterialInspector(index);
-      scrollToDefaultBgPreview(index);
+      selectUnifiedBgMaterial(index, event.metaKey || event.ctrlKey).catch(err => blueBgStatus(err.message));
     } else if (event.target.closest("[data-import-bg-material]")) {
       $("#bgFiles").click();
     }
@@ -5857,28 +7509,86 @@ function bind() {
       deleteSelectedDefaultBgMaterials();
     }
   };
-  $("#bgDeleteSelected").onclick = deleteSelectedBgItem;
+  $("#bgDeleteSelected").onclick = () => {
+    deleteSelectedBgItem();
+  };
   $("#bgEffectScale").oninput = () => {
-    if ($("#bgBlueMode").checked) updateBlueBgLayerScale();
-    else saveBgMaterialInspector();
+    updateBlueBgLayerScale();
   };
   $("#bgEffectScale").onchange = pushBgHistory;
   $("#bgEffectShadow").onchange = () => {
-    if ($("#bgBlueMode").checked) updateBlueBgLayerOptions();
-    else saveBgMaterialInspector();
+    updateBlueBgLayerOptions();
     pushBgHistory();
   };
   $("#bgEffectRound").onchange = () => {
-    if ($("#bgBlueMode").checked) updateBlueBgLayerOptions();
-    else saveBgMaterialInspector();
+    updateBlueBgLayerOptions();
     pushBgHistory();
   };
-  $("#sendBlueBgToAnnotation").onclick = sendBgToAnnotation;
-  $("#blueBgCanvas").onpointerdown = blueBgPointerDown;
-  $("#blueBgCanvas").onpointermove = blueBgPointerMove;
-  $("#blueBgCanvas").onpointerup = blueBgPointerUp;
-  $("#blueBgCanvas").onpointercancel = blueBgPointerUp;
+  $("#bgEffectRoundRadius").oninput = () => {
+    updateBlueBgLayerRadius();
+  };
+  $("#bgEffectRoundRadius").onchange = pushBgHistory;
+  $("#bgCanvasZoom").oninput = () => {
+    const stage = $("#blueBgStage");
+    const rect = stage.getBoundingClientRect();
+    setBlueBgZoomAtPoint(
+      Number($("#bgCanvasZoom").value) / 100,
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2
+    );
+    stage.focus();
+  };
+  [
+    ["#bgAddAnnotationNumber", "number"],
+    ["#bgAddAnnotationMask", "mask"],
+    ["#bgAddAnnotationBlur", "blur"],
+    ["#bgAddAnnotationMagnifier", "magnifier"],
+  ].forEach(([selector, mode]) => {
+    $(selector).onclick = () => activateBgAnnotationMode(mode);
+  });
+  $("#bgAnnotationBlurStrength").oninput = () => withAnnotationState(bgAnnotationState, updateAnnotationBlurStrength);
+  $("#bgAnnotationBlurStrength").onchange = () => withAnnotationState(bgAnnotationState, pushAnnotationHistory);
+  $("#bgAnnotationMagnifierWidth").oninput = () => withAnnotationState(bgAnnotationState, updateAnnotationMagnifierStyle);
+  $("#bgAnnotationMagnifierWidth").onchange = () => withAnnotationState(bgAnnotationState, pushAnnotationHistory);
+  $("#bgAnnotationNumberSize").oninput = () => withAnnotationState(bgAnnotationState, updateAnnotationNumberSize);
+  $("#bgAnnotationNumberSize").onchange = () => withAnnotationState(bgAnnotationState, pushAnnotationHistory);
+  $("#bgAnnotationNumberReset").onclick = () => {
+    $("#bgAnnotationNumberSize").value = String(ANNOTATION_NUMBER_SIZE);
+    withAnnotationState(bgAnnotationState, updateAnnotationNumberSize);
+    pushBgHistory();
+  };
+  $("#bgAnnotationInspector").onclick = event => {
+    const button = event.target.closest("[data-annotation-color-kind][data-annotation-color]");
+    if (!button) return;
+    updateBgAnnotationColor(button.dataset.annotationColorKind, button.dataset.annotationColor);
+    pushBgHistory();
+  };
+  [
+    ["#bgAnnotationMaskColor", "mask"],
+    ["#bgAnnotationNumberColor", "number"],
+    ["#bgAnnotationMagnifierColor", "magnifier"],
+  ].forEach(([selector, kind]) => {
+    $(selector).oninput = event => updateBgAnnotationColor(kind, event.target.value);
+    $(selector).onchange = pushBgHistory;
+  });
+  ["number", "mask", "blur", "magnifier"].forEach(kind => {
+    const control = $(`#bgAnnotation${kind[0].toUpperCase()}${kind.slice(1)}Shadow`);
+    control.onchange = () => {
+      updateBgAnnotationShadow(kind, control.checked);
+      pushBgHistory();
+    };
+  });
+  $("#bgAnnotationMaskRound").onchange = () => {
+    updateBgAnnotationMaskRound();
+    pushBgHistory();
+  };
+  $("#bgAnnotationMaskRoundRadius").oninput = updateBgAnnotationMaskRadius;
+  $("#bgAnnotationMaskRoundRadius").onchange = pushBgHistory;
   $("#blueBgCanvas").oncontextmenu = blueBgContextMenu;
+  $("#blueBgStage").onpointerdown = blueBgStagePointerDown;
+  $("#blueBgStage").onpointermove = blueBgStagePointerMove;
+  $("#blueBgStage").onpointerup = blueBgStagePointerUp;
+  $("#blueBgStage").onpointercancel = blueBgStagePointerUp;
   $("#blueBgMoveUp").onclick = () => moveSelectedBlueBgLayer(1);
   $("#blueBgMoveDown").onclick = () => moveSelectedBlueBgLayer(-1);
   $("#blueBgStage").addEventListener("wheel", blueBgWheel, { passive: false });
@@ -5971,6 +7681,8 @@ function bind() {
   $("#annotationMagnifierColor").onchange = pushAnnotationHistory;
   $("#annotationMagnifierWidth").oninput = updateAnnotationMagnifierStyle;
   $("#annotationMagnifierWidth").onchange = pushAnnotationHistory;
+  $("#annotationNumberSize").oninput = updateAnnotationNumberSize;
+  $("#annotationNumberSize").onchange = pushAnnotationHistory;
   $("#annotationUndo").onclick = () => restoreAnnotationHistory(annotationState.historyIndex - 1);
   $("#annotationRedo").onclick = () => restoreAnnotationHistory(annotationState.historyIndex + 1);
   $("#confirmAnnotationNumber").onclick = confirmAnnotationNumberEdit;
@@ -5986,20 +7698,30 @@ function bind() {
   };
   $("#deleteAnnotation").onclick = deleteSelectedAnnotation;
   $("#exportAnnotation").onclick = exportAnnotationImage;
-  $("#annotationCanvas").onpointerdown = annotationPointerDown;
-  $("#annotationCanvas").onpointermove = annotationPointerMove;
-  $("#annotationCanvas").onpointerup = annotationPointerUp;
-  $("#annotationCanvas").onpointercancel = annotationPointerUp;
+  $("#annotationStage").onpointerdown = nativeAnnotationStagePointerDown;
+  $("#annotationStage").onpointermove = annotationPointerMove;
+  $("#annotationStage").onpointerup = annotationPointerUp;
+  $("#annotationStage").onpointercancel = annotationPointerUp;
   $("#annotationCanvas").ondblclick = annotationDoubleClick;
   $("#annotationStage").addEventListener("wheel", annotationWheel, { passive: false });
   $("#annotationStage").addEventListener("gesturestart", annotationGestureStart, { passive: false });
   $("#annotationStage").addEventListener("gesturechange", annotationGestureChange, { passive: false });
   $("#annotationStage").onkeydown = annotationKeyDown;
+  document.addEventListener("paste", event => {
+    importClipboardImageIntoActiveModule(event).catch(error => {
+      const moduleId = activeImageModuleId();
+      const message = error?.message || "剪贴板图片导入失败，请重试。";
+      if (moduleId === "bg" && $("#bgBlueMode").checked) blueBgStatus(message);
+      else if (moduleId === "annotation") annotationStatusText(message);
+      else if (moduleId === "imageEditor") imageEditorStatus(message);
+    });
+  });
   document.addEventListener("keydown", imageModuleGlobalKeyDown);
   document.addEventListener("keyup", event => {
     if (event.key === "Alt") showImageModuleShortcutHints(false);
   });
   window.addEventListener("blur", () => showImageModuleShortcutHints(false));
+  window.addEventListener("resize", syncBgMaterialColumnWidth);
   $("#makeButton").onclick = () => makeButtonImage().catch(err => alert(err.message));
   $("#searchProducts").onclick = () => searchProductsAndGenerate().catch(err => $("#productInfoResult").textContent = err.message);
   $("#productKeywords").onkeydown = event => {
@@ -6069,3 +7791,4 @@ function bind() {
 
 bind();
 toggleBlueBgMode();
+showTab("bg");
