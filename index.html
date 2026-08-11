@@ -7,11 +7,10 @@
   <meta name="theme-color" content="#ffffff">
   <title>荔图 · Li Tu</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css?v=20260811-bg-layout1">
+  <link rel="stylesheet" href="./styles.css?v=20260811-material-drag1">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
-    <strong class="online-tool-name">荔图 <span>Li Tu</span></strong>
     <div class="tab-buttons">
       <button data-tab="bg" class="active">图片美化</button>
       <button data-tab="imageEditor">图片编辑</button>
@@ -189,11 +188,17 @@
         <input id="bgFiles" type="file" accept="image/*" multiple hidden>
         <input id="bgBlueMode" type="checkbox" hidden checked>
         <div class="bg-workbench">
-          <aside class="bg-material-pane">
-            <div id="bgMaterialList" class="bg-material-list">
-              <div class="bg-material-import-card"><button class="bg-material-import-button canvas-empty-import" type="button" data-import-bg-material>导入图片</button></div>
-            </div>
-          </aside>
+          <div class="bg-material-column">
+            <aside class="bg-material-pane">
+              <div id="bgMaterialList" class="bg-material-list">
+                <div class="bg-material-import-card"><button class="bg-material-import-button canvas-empty-import" type="button" data-import-bg-material>导入图片</button></div>
+              </div>
+            </aside>
+            <label class="bg-canvas-zoom-panel">
+              <span class="bg-effect-control-heading"><span>画布缩放</span><strong id="bgCanvasZoomValue">100%</strong></span>
+              <input id="bgCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
+            </label>
+          </div>
           <div class="bg-output">
             <div id="blueBgEditor" class="blue-bg-editor" hidden>
               <div id="blueBgStage" class="blue-bg-stage" tabindex="0" aria-label="图片美化画布">
@@ -215,6 +220,8 @@
               <div id="blueBgContextMenu" class="blue-bg-context-menu" role="menu" hidden>
                 <button id="blueBgMoveUp" type="button" role="menuitem">上移一层</button>
                 <button id="blueBgMoveDown" type="button" role="menuitem">下移一层</button>
+                <button id="blueBgEditSelected" type="button" role="menuitem">图片编辑</button>
+                <button id="blueBgDeleteMaterial" class="context-danger" type="button" role="menuitem">删除</button>
               </div>
               <div class="blue-bg-footer">
                 <span id="blueBgStatus" class="muted">拖动图片调整位置，拖动四角调整大小。</span>
@@ -236,10 +243,6 @@
               <label class="bg-effect-control bg-effect-size">
                 <span class="bg-effect-control-heading"><span>图片缩放</span><strong id="bgEffectScaleValue">—</strong></span>
                 <input id="bgEffectScale" type="range" value="90" min="10" max="200" step="1" disabled>
-              </label>
-              <label class="bg-effect-control bg-canvas-zoom-control">
-                <span class="bg-effect-control-heading"><span>画面缩放</span><strong id="bgCanvasZoomValue">100%</strong></span>
-                <input id="bgCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
               </label>
             </div>
             <aside id="bgBackgroundDialog" class="bg-background-panel" aria-label="更改背景" hidden>
@@ -297,7 +300,6 @@
               </div>
             </aside>
             <aside id="bgAnnotationInspector" class="bg-annotation-inspector" aria-label="标注效果调节" hidden>
-              <div id="bgAnnotationIdle" class="bg-annotation-idle">在画布中创建或选中标注后，可在这里调节效果。</div>
               <div id="bgAnnotationMaskControls" class="bg-annotation-control" hidden>
                 <label class="bg-effect-switch-row"><input id="bgAnnotationMaskShadow" type="checkbox"> 阴影效果</label>
                 <label class="bg-effect-switch-row"><input id="bgAnnotationMaskRound" type="checkbox"> 圆角效果</label>
@@ -308,14 +310,17 @@
                 <span class="bg-effect-control-heading"><span>遮挡颜色</span></span>
                 <div id="bgAnnotationMaskColors" class="bg-annotation-color-grid" role="group" aria-label="遮挡颜色">
                   <button type="button" data-annotation-color-kind="mask" data-annotation-color="#98b2c0"><span style="--swatch:#98b2c0"></span><strong>默认</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff594b"><span style="--swatch:#ff594b"></span><strong>红色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
-                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
-                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationMaskColor" type="color" value="#98b2c0" aria-label="自定义遮挡颜色"></span><strong>自定义</strong></label>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>#111111</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>#FFFFFF</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff594b"><span style="--swatch:#ff594b"></span><strong>#FF594B</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>#FF9500</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>#FFD60A</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>#34C759</strong></button>
+                  <button type="button" data-annotation-color-kind="mask" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>#1677FF</strong></button>
+                  <div class="bg-annotation-custom-color">
+                    <button class="bg-annotation-custom-select" type="button" data-annotation-custom-select="mask"><span class="bg-annotation-color-preview" style="--swatch:#98b2c0"></span><strong>自定义</strong></button>
+                    <label class="bg-annotation-color-picker-trigger" title="设置自定义遮挡颜色"><input id="bgAnnotationMaskColor" type="color" value="#98b2c0" aria-label="设置自定义遮挡颜色"></label>
+                  </div>
                 </div>
               </div>
               <div id="bgAnnotationBlurControls" class="bg-annotation-control" hidden>
@@ -330,14 +335,17 @@
                 <span class="bg-effect-control-heading"><span>序号颜色</span></span>
                 <div id="bgAnnotationNumberColors" class="bg-annotation-color-grid" role="group" aria-label="序号颜色">
                   <button type="button" data-annotation-color-kind="number" data-annotation-color="#ff5a52"><span style="--swatch:#ff5a52"></span><strong>默认</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
-                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>紫色</strong></button>
-                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationNumberColor" type="color" value="#ff5a52" aria-label="自定义序号颜色"></span><strong>自定义</strong></label>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>#111111</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>#FFFFFF</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>#FF9500</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>#FFD60A</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>#34C759</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>#1677FF</strong></button>
+                  <button type="button" data-annotation-color-kind="number" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>#AF52DE</strong></button>
+                  <div class="bg-annotation-custom-color">
+                    <button class="bg-annotation-custom-select" type="button" data-annotation-custom-select="number"><span class="bg-annotation-color-preview" style="--swatch:#ff5a52"></span><strong>自定义</strong></button>
+                    <label class="bg-annotation-color-picker-trigger" title="设置自定义序号颜色"><input id="bgAnnotationNumberColor" type="color" value="#ff5a52" aria-label="设置自定义序号颜色"></label>
+                  </div>
                 </div>
               </div>
               <div id="bgAnnotationMagnifierControls" class="bg-annotation-control" hidden>
@@ -347,14 +355,17 @@
                 <span class="bg-effect-control-heading"><span>线条颜色</span></span>
                 <div id="bgAnnotationMagnifierColors" class="bg-annotation-color-grid" role="group" aria-label="线条颜色">
                   <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ff594b"><span style="--swatch:#ff594b"></span><strong>默认</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>黑色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>白色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>橙色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>黄色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>绿色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>蓝色</strong></button>
-                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>紫色</strong></button>
-                  <label class="bg-annotation-custom-color"><span class="bg-annotation-color-preview"><input id="bgAnnotationMagnifierColor" type="color" value="#ff594b" aria-label="自定义线条颜色"></span><strong>自定义</strong></label>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#111111"><span style="--swatch:#111111"></span><strong>#111111</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffffff"><span style="--swatch:#ffffff"></span><strong>#FFFFFF</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ff9500"><span style="--swatch:#ff9500"></span><strong>#FF9500</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#ffd60a"><span style="--swatch:#ffd60a"></span><strong>#FFD60A</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#34c759"><span style="--swatch:#34c759"></span><strong>#34C759</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#1677ff"><span style="--swatch:#1677ff"></span><strong>#1677FF</strong></button>
+                  <button type="button" data-annotation-color-kind="magnifier" data-annotation-color="#af52de"><span style="--swatch:#af52de"></span><strong>#AF52DE</strong></button>
+                  <div class="bg-annotation-custom-color">
+                    <button class="bg-annotation-custom-select" type="button" data-annotation-custom-select="magnifier"><span class="bg-annotation-color-preview" style="--swatch:#ff594b"></span><strong>自定义</strong></button>
+                    <label class="bg-annotation-color-picker-trigger" title="设置自定义线条颜色"><input id="bgAnnotationMagnifierColor" type="color" value="#ff594b" aria-label="设置自定义线条颜色"></label>
+                  </div>
                 </div>
               </div>
             </aside>
@@ -362,8 +373,8 @@
           <div class="bg-mode-toolbar" role="toolbar" aria-label="图片美化功能">
             <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
             <button id="bgExportButton" type="button" aria-label="导出" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
-            <button id="bgViewMode" type="button" aria-label="移动" title="移动 (V)" disabled><span class="tool-symbol tool-symbol-move"></span><small>移动</small></button>
-            <button id="bgBackgroundButton" type="button" aria-label="更改背景" title="更改背景 (B)"><span class="tool-symbol tool-symbol-background"></span><small>背景</small></button>
+            <button id="bgViewMode" type="button" aria-label="背景美化" title="背景美化 (V)"><span class="tool-symbol tool-symbol-move"></span><small>背景美化</small></button>
+            <button id="bgBackgroundButton" type="button" aria-label="图片样式" title="图片样式 (B)" disabled><span class="tool-symbol tool-symbol-background"></span><small>图片样式</small></button>
             <button id="bgAddAnnotationNumber" type="button" aria-label="序号" title="序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
             <button id="bgAddAnnotationMask" type="button" aria-label="遮挡" title="遮挡 (M)" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
             <button id="bgAddAnnotationBlur" type="button" aria-label="模糊" title="模糊 (F)" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
@@ -629,6 +640,6 @@
 
   <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
 
-  <script src="./app.js?v=20260811-bg-layout1"></script>
+  <script src="./app.js?v=20260811-material-drag1"></script>
 </body>
 </html>

@@ -48,6 +48,11 @@ const BLUE_BG_HANDLE_SIZE = 28;
 const LIZHI_DEFAULT_COLOR = "#8CC6FF";
 const BG_DEFAULT_COLOR = "#3FB9FF";
 const BG_CUSTOM_COLOR_KEY = "litu.backgroundCustomColor.v1";
+const BG_ANNOTATION_CUSTOM_COLORS = {
+  mask: { key: "litu.annotationCustomColor.mask.v1", fallback: "#98b2c0", input: "#bgAnnotationMaskColor" },
+  number: { key: "litu.annotationCustomColor.number.v1", fallback: "#ff5a52", input: "#bgAnnotationNumberColor" },
+  magnifier: { key: "litu.annotationCustomColor.magnifier.v1", fallback: "#ff594b", input: "#bgAnnotationMagnifierColor" },
+};
 const BG_ASPECTS = {
   default: { label: "默认", value: "default" },
   blue: { label: "蓝底（2000 / 1083）", value: "blue" },
@@ -99,8 +104,8 @@ const blueBgState = {
   baseDisplayWidth: 0,
   baseDisplayHeight: 0,
   gestureStartZoom: 1,
-  inspectorMode: "effects",
-  toolMode: "move",
+  inspectorMode: "background",
+  toolMode: "background",
   snapGuides: { vertical: [], horizontal: [] },
 };
 let bgMaterials = [];
@@ -109,6 +114,10 @@ let bgSelectedMaterialIndices = [];
 let bgGeneratedResults = [];
 let bgHistory = [];
 let bgHistoryIndex = -1;
+let bgMaterialPointerDrag = null;
+let suppressBgMaterialClick = false;
+let bgContextMaterialIndex = -1;
+let bgMaterialStackSequence = 0;
 const bgRenderControllers = new WeakMap();
 const blueBgLayerSurfaceCache = new WeakMap();
 const imageEditorState = {
@@ -127,6 +136,8 @@ const imageEditorState = {
   baseDisplayHeight: 0,
   gestureStartZoom: 1,
   secondImage: null,
+  sourceBgMaterialIndex: null,
+  sourceBgLayerId: null,
 };
 function createAnnotationState(host = "annotation") {
   return {
@@ -243,7 +254,10 @@ function unionBounds(boundsList) {
 
 function syncCanvasSelectionOverlays(stage, canvas, primaryOverlay, selections) {
   if (!stage || !canvas || !primaryOverlay) return;
-  $$(".multi-selection-overlay", stage).forEach(overlay => overlay.remove());
+  const owner = primaryOverlay.id || primaryOverlay.dataset.selectionOwner || "selection";
+  $$(".multi-selection-overlay", stage)
+    .filter(overlay => overlay.dataset.selectionOwner === owner)
+    .forEach(overlay => overlay.remove());
   if (!selections.length) {
     syncCanvasSelectionOverlay(stage, canvas, primaryOverlay, null);
     return;
@@ -253,6 +267,7 @@ function syncCanvasSelectionOverlays(stage, canvas, primaryOverlay, selections) 
     if (index > 0) {
       overlay.removeAttribute("id");
       overlay.classList.add("multi-selection-overlay");
+      overlay.dataset.selectionOwner = owner;
       stage.appendChild(overlay);
     }
     syncCanvasSelectionOverlay(stage, canvas, overlay, selection.bounds);
@@ -1745,20 +1760,47 @@ async function selectUnifiedBgMaterial(index, additive = false) {
   if (!layer && blueBgState.layers.length < BLUE_BG_MAX_LAYERS) {
     await addBlueBgFiles([material.file]);
     layer = blueBgState.layers.find(item => item.materialIndex === index);
+    syncBlueBgLayersToMaterialOrder();
   }
   if (!layer) return;
   annotationState = bgAnnotationState;
-  clearBgAnnotationSelection();
+  if (!additive) clearBgAnnotationSelection();
   blueBgState.toolMode = "move";
   setBgInspectorMode("effects");
   const ids = new Set(additive ? selectedBlueBgLayers().map(item => item.id) : []);
-  if (additive && ids.has(layer.id)) ids.delete(layer.id);
-  else ids.add(layer.id);
+  const adding = !additive || !ids.has(layer.id);
+  if (adding) ids.add(layer.id);
+  else ids.delete(layer.id);
   blueBgState.selectedIds = [...ids];
-  blueBgState.selectedId = layer.id;
+  blueBgState.selectedId = adding ? layer.id : (blueBgState.selectedIds.at(-1) ?? null);
+  if (!blueBgState.selectedIds.length &&
+      (bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length)) {
+    setBgInspectorMode("annotation");
+  } else if (!blueBgState.selectedIds.length) {
+    blueBgState.toolMode = "background";
+    setBgInspectorMode("background");
+  }
   material.unused = false;
   updateBlueBgControls();
   renderBlueBgCanvas();
+}
+
+function selectNextBlueBgLayer() {
+  if (!blueBgState.layers.length) return false;
+  const topToBottom = [...blueBgState.layers].reverse();
+  const currentIndex = topToBottom.findIndex(layer => layer.id === blueBgState.selectedId);
+  const next = topToBottom[(currentIndex + 1 + topToBottom.length) % topToBottom.length];
+  clearBgAnnotationSelection();
+  blueBgState.selectedId = next.id;
+  blueBgState.selectedIds = [];
+  blueBgState.interaction = null;
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+  $("#blueBgStage").focus();
+  blueBgStatus(`已选择前景图：${next.fileName || "图片"}`);
+  return true;
 }
 
 function blueBgSelectionBounds() {
@@ -1872,11 +1914,12 @@ function setBgInspectorMode(mode) {
   blueBgState.inspectorMode = ["background", "annotation"].includes(mode) ? mode : "effects";
   const backgroundActive = blueBgState.inspectorMode === "background";
   const annotationActive = blueBgState.inspectorMode === "annotation";
+  const effectsActive = blueBgState.inspectorMode === "effects" && selectedBlueBgLayers().length > 0;
   $("#bgBackgroundDialog").hidden = !backgroundActive;
   $("#bgEffectToolbar").hidden = backgroundActive || annotationActive;
   $("#bgAnnotationInspector").hidden = !annotationActive;
-  $("#bgBackgroundButton").classList.toggle("active", backgroundActive);
-  $("#bgViewMode").classList.toggle("active", blueBgState.toolMode === "move" && blueBgState.layers.length > 0);
+  $("#bgViewMode").classList.toggle("active", backgroundActive);
+  $("#bgBackgroundButton").classList.toggle("active", effectsActive);
 }
 
 function openBgBackgroundDialog() {
@@ -1905,10 +1948,28 @@ function openBgBackgroundDialog() {
 }
 
 function closeBgBackgroundPanel() {
+  if (!selectedBlueBgLayers().length) {
+    openBgBackgroundDialog();
+    return;
+  }
   blueBgState.toolMode = "move";
   clearBgAnnotationSelection();
   setBgInspectorMode("effects");
   $("#blueBgStage").classList.remove("is-annotating");
+}
+
+function openBgImageStylePanel() {
+  if (!selectedBlueBgLayers().length) {
+    openBgBackgroundDialog();
+    return;
+  }
+  blueBgState.toolMode = "move";
+  clearBgAnnotationSelection();
+  setBgInspectorMode("effects");
+  $("#blueBgStage").classList.remove("is-annotating");
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+  blueBgStatus("图片样式：可调节所选前景图的阴影、圆角和缩放比例。");
 }
 
 async function applyBgBackgroundFromTiles() {
@@ -2024,7 +2085,7 @@ function syncBgEffectToolbar() {
   const disabled = !selected;
   const canvasZoomDisabled = $("#blueBgEditor").hidden;
   const toolbar = $("#bgEffectToolbar");
-  toolbar.classList.toggle("is-disabled", disabled && canvasZoomDisabled);
+  toolbar.classList.toggle("is-disabled", disabled);
   $("#bgDeleteSelected").disabled = disabled;
   $("#bgEffectShadow").disabled = disabled;
   $("#bgEffectRound").disabled = disabled;
@@ -2061,14 +2122,15 @@ function syncBgEffectToolbar() {
 }
 
 function updateBlueBgControls() {
-  const selected = selectedBlueBgLayer();
+  const selectedLayers = selectedBlueBgLayers();
   $("#blueBgStage").classList.toggle("has-layers", blueBgState.layers.length > 0);
-  $("#bgViewMode").disabled = !blueBgState.layers.length;
-  $("#bgViewMode").classList.toggle(
+  $("#bgViewMode").disabled = false;
+  $("#bgViewMode").classList.toggle("active", blueBgState.inspectorMode === "background");
+  $("#bgBackgroundButton").disabled = !selectedLayers.length;
+  $("#bgBackgroundButton").classList.toggle(
     "active",
-    blueBgState.layers.length > 0 && blueBgState.inspectorMode !== "background"
+    selectedLayers.length > 0 && blueBgState.inspectorMode === "effects"
   );
-  $("#bgBackgroundButton").classList.toggle("active", blueBgState.inspectorMode === "background");
   withAnnotationState(bgAnnotationState, updateBgAnnotationControls);
   syncBgEffectToolbar();
   renderBgMaterialList();
@@ -2151,6 +2213,10 @@ async function addBlueBgFiles(fileList, reset = false) {
     blueBgState.layers.push(layer);
     blueBgState.selectedId = layer.id;
     blueBgState.selectedIds = [];
+  }
+  if (accepted.length) {
+    blueBgState.toolMode = "move";
+    setBgInspectorMode("effects");
   }
   updateBlueBgControls();
   renderBlueBgCanvas();
@@ -2267,6 +2333,11 @@ function blueBgPointerDown(event) {
         original: { ...layer },
         originals: updatedSelection.map(candidate => ({ id: candidate.id, x: candidate.x, y: candidate.y })),
       } : null;
+      if (!updatedSelection.length) {
+        const hasSelectedAnnotation = bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length > 0;
+        blueBgState.toolMode = hasSelectedAnnotation ? "move" : "background";
+        setBgInspectorMode(hasSelectedAnnotation ? "annotation" : "background");
+      }
     } else {
       blueBgState.interaction = null;
     }
@@ -2480,6 +2551,15 @@ function bgAnnotationHitAtEvent(event) {
   });
 }
 
+function selectedBlueBgHandleAtEvent(event) {
+  if (!blueBgState.layers.length) return null;
+  const point = blueBgPointerPosition(event);
+  return [...selectedBlueBgLayers()]
+    .reverse()
+    .map(layer => ({ layer, handle: blueBgHitHandle(layer, point) }))
+    .find(candidate => candidate.handle) || null;
+}
+
 function blueBgLayerHitAtEvent(event) {
   if (!blueBgState.layers.length) return false;
   const point = blueBgPointerPosition(event);
@@ -2490,11 +2570,30 @@ function blueBgLayerHitAtEvent(event) {
 function blueBgStagePointerDown(event) {
   if (event.button > 0 || event.target.closest(".blue-bg-context-menu")) return;
   annotationState = bgAnnotationState;
+  const multiKey = event.metaKey || event.ctrlKey;
+  if (event.target === $("#blueBgStage")) {
+    const hadSelection = blueBgState.selectedId !== null || blueBgState.selectedIds.length ||
+      bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length;
+    clearAllBgCanvasSelections();
+    openBgBackgroundDialog();
+    $("#blueBgStage").focus();
+    if (hadSelection) blueBgStatus("已取消框选。");
+    event.preventDefault();
+    return;
+  }
+  if (blueBgState.toolMode !== "annotation" && selectedBlueBgHandleAtEvent(event)) {
+    blueBgState.toolMode = "move";
+    setBgInspectorMode("effects");
+    blueBgPointerDown(event);
+    return;
+  }
   if (blueBgState.toolMode === "annotation" || bgAnnotationHitAtEvent(event)) {
-    blueBgState.selectedId = null;
-    blueBgState.selectedIds = [];
-    blueBgState.interaction = null;
-    syncCanvasSelectionOverlays($("#blueBgStage"), blueBgCanvas(), $("#blueBgSelectionOverlay"), []);
+    if (!multiKey) {
+      blueBgState.selectedId = null;
+      blueBgState.selectedIds = [];
+      blueBgState.interaction = null;
+      syncCanvasSelectionOverlays($("#blueBgStage"), blueBgCanvas(), $("#blueBgSelectionOverlay"), []);
+    }
     if (blueBgState.toolMode !== "annotation") annotationState.mode = "view";
     setBgInspectorMode("annotation");
     annotationPointerDown(event);
@@ -2502,23 +2601,25 @@ function blueBgStagePointerDown(event) {
   }
   const hadSelection = blueBgState.selectedId !== null || blueBgState.selectedIds.length ||
     bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length;
-  clearBgAnnotationSelection();
-  blueBgState.toolMode = "move";
-  setBgInspectorMode("effects");
-  if (event.target === $("#blueBgStage") && !blueBgLayerHitAtEvent(event)) {
+  if (!multiKey) clearBgAnnotationSelection();
+  if (!blueBgLayerHitAtEvent(event)) {
     clearBlueBgSelection();
-    updateBlueBgControls();
-    renderBlueBgCanvas();
     $("#blueBgStage").focus();
+    openBgBackgroundDialog();
     if (hadSelection) blueBgStatus("已取消框选。");
     return;
   }
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
   blueBgPointerDown(event);
 }
 
 function blueBgStagePointerMove(event) {
   annotationState = bgAnnotationState;
-  if (bgAnnotationState.interaction || blueBgState.toolMode === "annotation" || bgAnnotationHitAtEvent(event)) {
+  if (blueBgState.interaction ||
+      (blueBgState.toolMode !== "annotation" && !bgAnnotationState.interaction && selectedBlueBgHandleAtEvent(event))) {
+    blueBgPointerMove(event);
+  } else if (bgAnnotationState.interaction || blueBgState.toolMode === "annotation" || bgAnnotationHitAtEvent(event)) {
     annotationPointerMove(event);
   } else {
     blueBgPointerMove(event);
@@ -2541,29 +2642,219 @@ function blueBgContextMenu(event) {
   const layer = [...blueBgState.layers].reverse().find(candidate => blueBgPointInLayer(candidate, point));
   if (!layer) return;
   event.preventDefault();
+  showBlueBgContextMenuForLayer(layer, event.clientX, event.clientY);
+}
+
+function showBlueBgContextMenuForLayer(layer, clientX, clientY) {
+  if (!layer) return;
   blueBgState.selectedId = layer.id;
   blueBgState.selectedIds = [];
+  clearBgAnnotationSelection();
+  blueBgState.toolMode = "move";
+  setBgInspectorMode("effects");
   updateBlueBgControls();
   renderBlueBgCanvas();
+  showBlueBgContextMenuForMaterial(layer.materialIndex, clientX, clientY);
+}
+
+function showBlueBgContextMenuForMaterial(materialIndex, clientX, clientY) {
+  const material = bgMaterials[materialIndex];
+  if (!material) return;
+  bgContextMaterialIndex = materialIndex;
+  const layer = blueBgState.layers.find(item => item.materialIndex === materialIndex);
+  if (!layer) {
+    clearAllBgCanvasSelections();
+    blueBgState.toolMode = "background";
+    setBgInspectorMode("background");
+    updateBlueBgControls();
+    renderBlueBgCanvas();
+  }
   const menu = $("#blueBgContextMenu");
-  const index = blueBgState.layers.findIndex(candidate => candidate.id === layer.id);
-  $("#blueBgMoveUp").disabled = index === blueBgState.layers.length - 1;
-  $("#blueBgMoveDown").disabled = index === 0;
-  menu.style.left = `${Math.min(event.clientX, window.innerWidth - 150)}px`;
-  menu.style.top = `${Math.min(event.clientY, window.innerHeight - 100)}px`;
+  const order = orderedBgMaterialIndexes();
+  const position = order.indexOf(materialIndex);
+  $("#blueBgMoveUp").disabled = position <= 0;
+  $("#blueBgMoveDown").disabled = position < 0 || position === order.length - 1;
+  $("#blueBgEditSelected").disabled = !material.file;
+  menu.style.left = `${Math.min(clientX, window.innerWidth - 160)}px`;
+  menu.style.top = `${Math.min(clientY, window.innerHeight - 174)}px`;
   menu.hidden = false;
 }
 
-function moveSelectedBlueBgLayer(direction) {
-  const index = blueBgState.layers.findIndex(layer => layer.id === blueBgState.selectedId);
-  const nextIndex = index + direction;
-  if (index < 0 || nextIndex < 0 || nextIndex >= blueBgState.layers.length) return;
-  const [layer] = blueBgState.layers.splice(index, 1);
-  blueBgState.layers.splice(nextIndex, 0, layer);
+function orderedBgMaterialIndexes() {
+  return bgMaterials
+    .map((material, index) => ({ material, index }))
+    .sort((a, b) => (Number(b.material.stackOrder) || 0) - (Number(a.material.stackOrder) || 0))
+    .map(item => item.index);
+}
+
+function normalizeBgMaterialStackOrder(order) {
+  order.forEach((materialIndex, position) => {
+    if (bgMaterials[materialIndex]) bgMaterials[materialIndex].stackOrder = order.length - position;
+  });
+  bgMaterialStackSequence = order.length + 1;
+}
+
+function syncBlueBgLayersToMaterialOrder() {
+  const order = orderedBgMaterialIndexes();
+  const layersByMaterial = new Map(
+    blueBgState.layers
+      .filter(layer => Number.isInteger(layer.materialIndex))
+      .map(layer => [layer.materialIndex, layer])
+  );
+  const orderedLayers = order.map(index => layersByMaterial.get(index)).filter(Boolean).reverse();
+  const orderedIds = new Set(orderedLayers.map(layer => layer.id));
+  blueBgState.layers = [
+    ...blueBgState.layers.filter(layer => !orderedIds.has(layer.id)),
+    ...orderedLayers,
+  ];
+}
+
+function applyBgMaterialOrder(order, selectedIndex, message = "已更新素材与前景图层级。") {
+  normalizeBgMaterialStackOrder(order);
+  syncBlueBgLayersToMaterialOrder();
+  bgContextMaterialIndex = selectedIndex;
+  const selectedLayer = blueBgState.layers.find(layer => layer.materialIndex === selectedIndex);
+  if (selectedLayer) {
+    blueBgState.selectedId = selectedLayer.id;
+    blueBgState.selectedIds = [];
+  }
   hideBlueBgContextMenu();
+  updateBlueBgControls();
+  renderBgMaterialList();
   renderBlueBgCanvas();
   pushBgHistory();
-  blueBgStatus(direction > 0 ? "所选图片已上移一层。" : "所选图片已下移一层。");
+  blueBgStatus(message);
+}
+
+function moveContextBgMaterial(direction) {
+  const order = orderedBgMaterialIndexes();
+  const position = order.indexOf(bgContextMaterialIndex);
+  const nextPosition = position + (direction > 0 ? -1 : 1);
+  if (position < 0 || nextPosition < 0 || nextPosition >= order.length) return;
+  [order[position], order[nextPosition]] = [order[nextPosition], order[position]];
+  applyBgMaterialOrder(
+    order,
+    bgContextMaterialIndex,
+    direction > 0 ? "所选素材已上移一层。" : "所选素材已下移一层。"
+  );
+}
+
+function reorderBgMaterial(sourceIndex, targetIndex, placement) {
+  if (sourceIndex === targetIndex) return;
+  const order = orderedBgMaterialIndexes().filter(index => index !== sourceIndex);
+  const targetPosition = order.indexOf(targetIndex);
+  if (targetPosition < 0) return;
+  order.splice(targetPosition + (placement === "after" ? 1 : 0), 0, sourceIndex);
+  applyBgMaterialOrder(order, sourceIndex, "已按素材库顺序更新前景图层级。");
+}
+
+async function openSelectedBlueBgLayerInEditor() {
+  const selectedLayer = selectedBlueBgLayer();
+  const materialIndex = Number.isInteger(bgContextMaterialIndex)
+    ? bgContextMaterialIndex
+    : selectedLayer?.materialIndex;
+  const material = Number.isInteger(materialIndex) ? bgMaterials[materialIndex] : null;
+  if (!material?.file) return;
+  const layer = blueBgState.layers.find(item => item.materialIndex === materialIndex) || null;
+  hideBlueBgContextMenu();
+  showTab("imageEditor");
+  await loadImageEditorFile(material.file, { materialIndex, layerId: layer?.id ?? null });
+  imageEditorStatus("已从图片美化打开素材；编辑完成后按 ⌘ S 同步回图片美化。");
+}
+
+function deleteBgMaterialCompletely(materialIndex = bgContextMaterialIndex) {
+  const material = bgMaterials[materialIndex];
+  if (!material) return;
+  // 历史记录仍会持有这一素材；保留对象 URL，确保撤销删除后预览可以恢复。
+  if (material.renderTimer) window.clearTimeout(material.renderTimer);
+  bgRenderControllers.get(material)?.abort();
+  const removedLayerIds = new Set(
+    blueBgState.layers.filter(layer => layer.materialIndex === materialIndex).map(layer => layer.id)
+  );
+  blueBgState.layers = blueBgState.layers.filter(layer => layer.materialIndex !== materialIndex);
+  blueBgState.layers.forEach(layer => {
+    if (Number.isInteger(layer.materialIndex) && layer.materialIndex > materialIndex) layer.materialIndex -= 1;
+  });
+  bgMaterials.splice(materialIndex, 1);
+  normalizeBgMaterialStackOrder(orderedBgMaterialIndexes());
+  if (imageEditorState.sourceBgMaterialIndex === materialIndex) {
+    imageEditorState.sourceBgMaterialIndex = null;
+    imageEditorState.sourceBgLayerId = null;
+  } else if (imageEditorState.sourceBgMaterialIndex > materialIndex) {
+    imageEditorState.sourceBgMaterialIndex -= 1;
+  }
+  if (removedLayerIds.has(blueBgState.selectedId) || blueBgState.selectedIds.some(id => removedLayerIds.has(id))) {
+    clearAllBgCanvasSelections();
+    openBgBackgroundDialog();
+  }
+  bgContextMaterialIndex = -1;
+  hideBlueBgContextMenu();
+  syncBgGeneratedResults();
+  updateBlueBgControls();
+  renderBgMaterialList();
+  renderBlueBgCanvas();
+  pushBgHistory();
+  blueBgStatus("已从素材库和画布中删除该图片。");
+}
+
+async function syncImageEditorToBgMaterial() {
+  const materialIndex = imageEditorState.sourceBgMaterialIndex;
+  const material = Number.isInteger(materialIndex) ? bgMaterials[materialIndex] : null;
+  if (!imageEditorState.hasImage || !material) {
+    imageEditorStatus("当前图片不是从图片美化打开的素材。");
+    return false;
+  }
+  const blob = await new Promise(resolve => imageEditorState.documentCanvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("生成编辑结果失败，请重试。");
+  const baseName = (material.file?.name || imageEditorState.sourceName || "image").replace(/\.[^.]+$/, "");
+  const file = new File([blob], `${baseName}.png`, { type: "image/png" });
+  const previewUrl = URL.createObjectURL(file);
+  let image;
+  try {
+    image = await loadImageSource(previewUrl);
+  } catch (error) {
+    URL.revokeObjectURL(previewUrl);
+    throw error;
+  }
+  const oldPreviewUrl = material.previewUrl;
+  if (material.outputUrl) URL.revokeObjectURL(material.outputUrl);
+  material.file = file;
+  material.previewUrl = previewUrl;
+  material.outputBlob = null;
+  material.outputUrl = "";
+  material.renderVersion = (material.renderVersion || 0) + 1;
+  const fit = Math.min(
+    blueBgCanvas().width * 0.68 / image.naturalWidth,
+    blueBgCanvas().height * 0.72 / image.naturalHeight
+  );
+  blueBgState.layers
+    .filter(layer => layer.materialIndex === materialIndex)
+    .forEach(layer => {
+      const centerX = layer.x + layer.width / 2;
+      const centerY = layer.y + layer.height / 2;
+      const scale = layer.width / Math.max(1, layer.fitWidth);
+      layer.image = image;
+      layer.fileName = file.name;
+      layer.previewUrl = previewUrl;
+      layer.baseWidth = image.naturalWidth;
+      layer.baseHeight = image.naturalHeight;
+      layer.fitWidth = Math.max(80, image.naturalWidth * fit);
+      layer.fitHeight = image.naturalHeight * fit;
+      layer.aspect = image.naturalWidth / image.naturalHeight;
+      layer.width = layer.fitWidth * scale;
+      layer.height = layer.fitHeight * scale;
+      layer.x = centerX - layer.width / 2;
+      layer.y = centerY - layer.height / 2;
+      layer.hasTransparentCorners = detectImageCornerRadius(image) > 0;
+      clampBlueBgLayer(layer);
+    });
+  if (oldPreviewUrl) URL.revokeObjectURL(oldPreviewUrl);
+  renderBgMaterialList();
+  updateBlueBgControls();
+  renderBlueBgCanvas();
+  pushBgHistory();
+  imageEditorStatus("已同步到图片美化：素材预览和画布前景图均已更新。");
+  return true;
 }
 
 function updateBlueBgLayerOptions() {
@@ -2635,8 +2926,7 @@ function removeSelectedBlueBgLayers() {
 function deleteBlueBgLayer() {
   const count = removeSelectedBlueBgLayers();
   if (!count) return;
-  updateBlueBgControls();
-  renderBlueBgCanvas();
+  openBgBackgroundDialog();
   pushBgHistory();
   blueBgStatus(`已移除 ${count} 张画布前景图，素材库保留并标记为未使用 · 共 ${blueBgState.layers.length} 张图片`);
 }
@@ -2650,8 +2940,8 @@ function deleteSelectedBgCanvasItems() {
   }
   if (!layerCount && !annotationIds.size) return false;
   clearAllBgCanvasSelections();
-  blueBgState.toolMode = "move";
-  setBgInspectorMode("effects");
+  blueBgState.toolMode = "background";
+  openBgBackgroundDialog();
   updateBlueBgControls();
   renderBlueBgCanvas();
   pushBgHistory();
@@ -2663,6 +2953,14 @@ function deleteSelectedBgCanvasItems() {
 }
 
 function blueBgKeyDown(event) {
+  if (event.key.toLowerCase() === "v" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearAllBgCanvasSelections();
+    openBgBackgroundDialog();
+    blueBgStatus("已切换至背景美化。");
+    return;
+  }
   if (event.key === "Delete" || event.key === "Backspace") {
     if (deleteSelectedBgCanvasItems()) event.preventDefault();
     return;
@@ -2761,13 +3059,16 @@ function clearBgMaterials() {
   bgMaterials = [];
   bgSelectedMaterialIndex = -1;
   bgSelectedMaterialIndices = [];
+  bgContextMaterialIndex = -1;
+  bgMaterialStackSequence = 0;
 }
 
 function setBgFiles(fileList) {
   const files = Array.from(fileList || []);
   clearBgMaterials();
-  bgMaterials = files.map(file => ({
+  bgMaterials = files.map((file, index) => ({
     file,
+    stackOrder: index + 1,
     previewUrl: URL.createObjectURL(file),
     scale: 90,
     shadow: true,
@@ -2783,6 +3084,7 @@ function setBgFiles(fileList) {
     rendering: false,
     renderTimer: null,
   }));
+  bgMaterialStackSequence = bgMaterials.length + 1;
   bgSelectedMaterialIndex = bgMaterials.length ? 0 : -1;
   bgSelectedMaterialIndices = [];
   bgGeneratedResults = [];
@@ -2815,6 +3117,7 @@ async function importBgFiles(fileList) {
     const accepted = files.slice(0, Math.max(0, available));
     bgMaterials.push(...accepted.map(file => ({
       file,
+      stackOrder: bgMaterialStackSequence++,
       previewUrl: URL.createObjectURL(file),
       scale: 90,
       shadow: true,
@@ -2967,12 +3270,17 @@ function renderBgMaterialList() {
   const scroller = wrap.closest(".bg-material-pane");
   const scrollTop = scroller?.scrollTop || 0;
   wrap.innerHTML = "";
-  bgMaterials.forEach((material, index) => {
+  const displayIndexes = orderedBgMaterialIndexes();
+  displayIndexes.forEach(index => {
+    const material = bgMaterials[index];
     const layer = blueBgState.layers.find(item => item.materialIndex === index);
     const selected = layer && selectedBlueBgLayers().some(item => item.id === layer.id);
     const card = document.createElement("div");
     card.className = `bg-material-card${selected ? " active" : ""}${material.unused ? " is-unused" : ""}`;
     card.dataset.bgMaterialIndex = String(index);
+    if (layer) {
+      card.dataset.bgLayerId = String(layer.id);
+    }
     card.tabIndex = 0;
     card.setAttribute("role", "button");
     card.setAttribute("aria-label", `选择素材 ${material.file.name}${material.unused ? "（未使用）" : ""}`);
@@ -2981,6 +3289,7 @@ function renderBgMaterialList() {
     const img = document.createElement("img");
     img.src = material.previewUrl;
     img.alt = "";
+    img.draggable = false;
     preview.appendChild(img);
     card.appendChild(preview);
     if (material.unused) {
@@ -3101,6 +3410,7 @@ function pushBgHistory() {
   const signature = JSON.stringify({
     materials: snapshot.materials.map(material => ({
       name: material.file?.name,
+      stackOrder: material.stackOrder,
       scale: material.scale,
       shadow: material.shadow,
       round: material.round,
@@ -3145,6 +3455,8 @@ function restoreBgHistory(index) {
   });
   bgHistoryIndex = index;
   bgMaterials = entry.snapshot.materials.map(material => ({ ...material, renderTimer: null }));
+  bgMaterialStackSequence = Math.max(0, ...bgMaterials.map(material => Number(material.stackOrder) || 0)) + 1;
+  bgContextMaterialIndex = -1;
   bgSelectedMaterialIndex = Math.min(entry.snapshot.selectedMaterialIndex ?? bgSelectedMaterialIndex, bgMaterials.length - 1);
   bgSelectedMaterialIndices = (entry.snapshot.selectedMaterialIndices || []).filter(index => index < bgMaterials.length);
   blueBgState.layers = entry.snapshot.layers.map(layer => ({ ...layer }));
@@ -3803,7 +4115,7 @@ function resetImageEditorZoom() {
   });
 }
 
-async function loadImageEditorFile(file) {
+async function loadImageEditorFile(file, sourceBg = null) {
   if (!file) return;
   const url = URL.createObjectURL(file);
   try {
@@ -3822,6 +4134,8 @@ async function loadImageEditorFile(file) {
     imageEditorState.snapGuides = emptySnapGuides();
     imageEditorState.history = [];
     imageEditorState.historyIndex = -1;
+    imageEditorState.sourceBgMaterialIndex = sourceBg?.materialIndex ?? null;
+    imageEditorState.sourceBgLayerId = sourceBg?.layerId ?? null;
     pushImageEditorHistory();
     $("#imageEditorStage").classList.add("has-image");
     renderImageEditorCanvas();
@@ -4610,7 +4924,10 @@ function updateBgAnnotationControls() {
   const selectedItems = selectedAnnotationItems();
   const selected = selectedItems.length === 1 ? selectedItems[0] : null;
   const annotationActive = blueBgState.toolMode === "annotation";
-  const displayType = selected?.type || (annotationActive ? annotationState.mode : null);
+  const creationType = ["mask", "blur", "number", "magnifier"].includes(annotationState.mode)
+    ? annotationState.mode
+    : null;
+  const displayType = selected?.type || (annotationActive ? creationType : null);
   [
     ["#bgAddAnnotationNumber", "number"],
     ["#bgAddAnnotationMask", "mask"],
@@ -4621,6 +4938,12 @@ function updateBgAnnotationControls() {
     button.disabled = !hasImage;
     button.classList.toggle("active", annotationActive && annotationState.mode === mode);
   });
+  if (blueBgState.inspectorMode === "annotation" && !displayType) {
+    const hasSelectedLayer = selectedBlueBgLayers().length > 0;
+    blueBgState.toolMode = hasSelectedLayer ? "move" : "background";
+    setBgInspectorMode(hasSelectedLayer ? "effects" : "background");
+    return;
+  }
   const inspector = $("#bgAnnotationInspector");
   const showInspector = blueBgState.inspectorMode === "annotation";
   inspector.hidden = !showInspector;
@@ -4632,17 +4955,9 @@ function updateBgAnnotationControls() {
   blurControls.hidden = displayType !== "blur";
   numberControls.hidden = displayType !== "number";
   magnifierControls.hidden = displayType !== "magnifier";
-  const hasAdjustments = [maskControls, blurControls, numberControls, magnifierControls]
-    .some(control => !control.hidden);
-  const idle = $("#bgAnnotationIdle");
-  idle.hidden = hasAdjustments;
-  if (!hasAdjustments) {
-    idle.textContent = "选择一种标注工具后，可在这里预先设置创建效果。";
-  }
   const maskColor = selected?.type === "mask"
     ? selected.color || "#98b2c0"
     : annotationState.maskColor || "#98b2c0";
-  $("#bgAnnotationMaskColor").value = maskColor;
   syncBgAnnotationColorTiles("mask", maskColor);
   const maskShadow = selected?.type === "mask" ? Boolean(selected.shadow) : Boolean(annotationState.shadows.mask);
   const maskRound = selected?.type === "mask" ? Boolean(selected.round) : Boolean(annotationState.maskRound);
@@ -4667,7 +4982,6 @@ function updateBgAnnotationControls() {
     const color = selected?.type === "number" ? selected.color || "#ff5a52" : annotationState.numberColor;
     $("#bgAnnotationNumberSize").value = String(size);
     $("#bgAnnotationNumberSizeValue").textContent = `${size}px`;
-    $("#bgAnnotationNumberColor").value = color;
     $("#bgAnnotationNumberShadow").checked = selected?.type === "number"
       ? Boolean(selected.shadow)
       : Boolean(annotationState.shadows.number);
@@ -4676,7 +4990,6 @@ function updateBgAnnotationControls() {
   if (displayType === "magnifier") {
     const color = selected?.type === "magnifier" ? selected.color : annotationState.magnifierColor;
     const width = selected?.type === "magnifier" ? selected.lineWidth : annotationState.magnifierWidth;
-    $("#bgAnnotationMagnifierColor").value = color;
     $("#bgAnnotationMagnifierWidth").value = String(width);
     $("#bgAnnotationMagnifierWidthValue").textContent = `${width}px`;
     $("#bgAnnotationMagnifierShadow").checked = selected?.type === "magnifier"
@@ -4700,9 +5013,38 @@ function syncBgAnnotationColorTiles(kind, color) {
   }[kind];
   const custom = $(inputId)?.closest(".bg-annotation-custom-color");
   if (custom) {
-    const preset = buttons.some(button => button.dataset.annotationColor.toLowerCase() === normalized);
-    custom.classList.toggle("active", !preset);
+    custom.classList.toggle("active", storedBgAnnotationCustomColor(kind) === normalized);
   }
+}
+
+function storedBgAnnotationCustomColor(kind) {
+  const config = BG_ANNOTATION_CUSTOM_COLORS[kind];
+  if (!config) return "";
+  return String(localStorage.getItem(config.key) || config.fallback).toLowerCase();
+}
+
+function syncBgAnnotationCustomColorTile(kind) {
+  const config = BG_ANNOTATION_CUSTOM_COLORS[kind];
+  if (!config) return;
+  const input = $(config.input);
+  const custom = input?.closest(".bg-annotation-custom-color");
+  const preview = custom?.querySelector(".bg-annotation-color-preview");
+  const color = storedBgAnnotationCustomColor(kind);
+  if (input) input.value = color;
+  if (preview) preview.style.setProperty("--swatch", color);
+}
+
+function initializeBgAnnotationCustomColors() {
+  Object.keys(BG_ANNOTATION_CUSTOM_COLORS).forEach(syncBgAnnotationCustomColorTile);
+}
+
+function saveBgAnnotationCustomColor(kind, color) {
+  const config = BG_ANNOTATION_CUSTOM_COLORS[kind];
+  if (!config) return;
+  const normalized = String(color || config.fallback).toLowerCase();
+  localStorage.setItem(config.key, normalized);
+  syncBgAnnotationCustomColorTile(kind);
+  updateBgAnnotationColor(kind, normalized);
 }
 
 function annotationStatusText(message) {
@@ -7058,12 +7400,9 @@ function enterActiveImageModuleView() {
     setImageEditorMode("view");
   } else if (moduleId === "bg") {
     annotationState = bgAnnotationState;
-    closeBgBackgroundPanel();
     blueBgState.interaction = null;
     blueBgState.snapGuides = emptySnapGuides();
-    renderBlueBgCanvas();
-    updateBlueBgControls();
-    blueBgStatus("移动模式：点选前景图后可拖动位置或调整大小。");
+    openBgBackgroundDialog();
   }
 }
 
@@ -7126,6 +7465,7 @@ function selectAllInActiveImageTool() {
     setBgInspectorMode("effects");
     updateBlueBgControls();
     renderBlueBgCanvas();
+    requestAnimationFrame(renderBlueBgCanvas);
     $("#blueBgStage").focus();
     blueBgStatus(`已全选 ${blueBgState.selectedIds.length} 张前景图和 ${bgAnnotationState.selectedIds.length} 个标注。`);
     return true;
@@ -7240,6 +7580,19 @@ function imageModuleGlobalKeyDown(event) {
     deselectActiveImageModule(moduleId);
     return;
   }
+  if (commandKey && event.key.toLowerCase() === "s" && moduleId === "imageEditor") {
+    event.preventDefault();
+    syncImageEditorToBgMaterial().catch(error => imageEditorStatus(error.message));
+    return;
+  }
+  if (moduleId === "bg" && event.key === "Escape" && blueBgState.inspectorMode !== "background") {
+    event.preventDefault();
+    clearAllBgCanvasSelections();
+    openBgBackgroundDialog();
+    $("#blueBgStage").focus();
+    blueBgStatus("已切换至背景美化。");
+    return;
+  }
   if (editing) return;
   if (commandKey && event.key.toLowerCase() === "a" && selectAllInActiveImageTool()) {
     event.preventDefault();
@@ -7265,7 +7618,7 @@ function imageModuleGlobalKeyDown(event) {
   }
   if (moduleId === "bg") {
     const bgShortcuts = {
-      b: openBgBackgroundDialog,
+      b: selectNextBlueBgLayer,
       n: () => activateBgAnnotationMode("number"),
       m: () => activateBgAnnotationMode("mask"),
       f: () => activateBgAnnotationMode("blur"),
@@ -7326,7 +7679,14 @@ function imageModuleGlobalKeyDown(event) {
   }
   if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "v") {
     event.preventDefault();
-    enterActiveImageModuleView();
+    if (moduleId === "bg") {
+      clearAllBgCanvasSelections();
+      openBgBackgroundDialog();
+      $("#blueBgStage")?.focus();
+      blueBgStatus("已切换至背景美化。");
+    } else {
+      enterActiveImageModuleView();
+    }
   }
 }
 
@@ -7336,8 +7696,7 @@ function deselectActiveImageModule(moduleId = activeImageModuleId()) {
       bgAnnotationState.selectedId !== null || bgAnnotationState.selectedIds.length || bgAnnotationState.selectedPart;
     if (!hasSelection) return false;
     clearAllBgCanvasSelections();
-    updateBlueBgControls();
-    renderBlueBgCanvas();
+    openBgBackgroundDialog();
     blueBgStatus("已取消框选。");
     return true;
   }
@@ -7439,10 +7798,10 @@ function bind() {
   $("#makeShort").onclick = () => makeShort("shorturl").catch(err => $("#shortResult").textContent = err.message);
   $("#expandShort").onclick = () => makeShort("expand").catch(err => $("#shortResult").textContent = err.message);
   $("#bgImportButton").onclick = () => {
-    closeBgBackgroundPanel();
     $("#bgFiles").click();
   };
-  $("#bgBackgroundButton").onclick = openBgBackgroundDialog;
+  $("#bgViewMode").onclick = openBgBackgroundDialog;
+  $("#bgBackgroundButton").onclick = openBgImageStylePanel;
   $("#bgBackgroundFile").onchange = () => {
     if (!$("#bgBackgroundFile").files?.length) return;
     $("#bgBackgroundType").value = "image";
@@ -7485,12 +7844,16 @@ function bind() {
     closeBgBackgroundPanel();
     confirmBlueBgRender();
   };
-  $("#bgViewMode").onclick = enterActiveImageModuleView;
   $("#bgFiles").onchange = event => {
     importBgFiles(event.target.files).catch(err => alert(err.message));
     event.target.value = "";
   };
   $("#bgMaterialList").onclick = event => {
+    if (suppressBgMaterialClick) {
+      suppressBgMaterialClick = false;
+      event.preventDefault();
+      return;
+    }
     const material = event.target.closest("[data-bg-material-index]");
     if (material) {
       const index = Number(material.dataset.bgMaterialIndex);
@@ -7499,6 +7862,104 @@ function bind() {
       $("#bgFiles").click();
     }
   };
+  $("#bgMaterialList").oncontextmenu = event => {
+    const card = event.target.closest("[data-bg-material-index]");
+    if (!card) return;
+    event.preventDefault();
+    const materialIndex = Number(card.dataset.bgMaterialIndex);
+    const layer = blueBgState.layers.find(candidate => candidate.materialIndex === materialIndex);
+    if (layer) showBlueBgContextMenuForLayer(layer, event.clientX, event.clientY);
+    else showBlueBgContextMenuForMaterial(materialIndex, event.clientX, event.clientY);
+  };
+  $("#bgMaterialList").onpointerdown = event => {
+    if (event.button !== 0) return;
+    const card = event.target.closest("[data-bg-material-index]");
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    bgMaterialPointerDrag = {
+      pointerId: event.pointerId,
+      sourceIndex: Number(card.dataset.bgMaterialIndex),
+      sourceCard: card,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+      moved: false,
+      targetIndex: Number(card.dataset.bgMaterialIndex),
+      placement: "before",
+      placeholder: null,
+    };
+  };
+
+  const positionBgMaterialDrag = event => {
+    const drag = bgMaterialPointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      const placeholder = document.createElement("div");
+      placeholder.className = "bg-material-drop-slot";
+      placeholder.setAttribute("aria-hidden", "true");
+      drag.placeholder = placeholder;
+      drag.sourceCard.remove();
+      document.body.appendChild(drag.sourceCard);
+      drag.sourceCard.classList.add("is-dragging");
+      drag.sourceCard.style.width = `${drag.width}px`;
+      drag.sourceCard.style.height = `${drag.height}px`;
+      document.body.classList.add("is-dragging-bg-material");
+    }
+    drag.sourceCard.style.left = `${event.clientX - drag.offsetX}px`;
+    drag.sourceCard.style.top = `${event.clientY - drag.offsetY}px`;
+
+    const list = $("#bgMaterialList");
+    const cards = $$(".bg-material-card[data-bg-material-index]", list);
+    const importCard = $(".bg-material-import-card", list);
+    if (!cards.length) {
+      list.insertBefore(drag.placeholder, importCard || null);
+      drag.targetIndex = drag.sourceIndex;
+      drag.placement = "before";
+      return;
+    }
+    const beforeCard = cards.find(card => {
+      const rect = card.getBoundingClientRect();
+      return event.clientY < rect.top + rect.height / 2;
+    });
+    if (beforeCard) {
+      list.insertBefore(drag.placeholder, beforeCard);
+      drag.targetIndex = Number(beforeCard.dataset.bgMaterialIndex);
+      drag.placement = "before";
+      return;
+    }
+    list.insertBefore(drag.placeholder, importCard || null);
+    drag.targetIndex = Number(cards.at(-1).dataset.bgMaterialIndex);
+    drag.placement = "after";
+  };
+
+  const finishBgMaterialPointerDrag = (event, cancelled = false) => {
+    const drag = bgMaterialPointerDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.moved) {
+      suppressBgMaterialClick = true;
+      window.setTimeout(() => { suppressBgMaterialClick = false; }, 80);
+      drag.sourceCard.remove();
+      drag.placeholder?.remove();
+      document.body.classList.remove("is-dragging-bg-material");
+      if (cancelled) {
+        renderBgMaterialList();
+      } else if (drag.sourceIndex === drag.targetIndex) {
+        renderBgMaterialList();
+      } else {
+        reorderBgMaterial(drag.sourceIndex, drag.targetIndex, drag.placement);
+      }
+    }
+    bgMaterialPointerDrag = null;
+  };
+  window.addEventListener("pointermove", positionBgMaterialDrag, true);
+  window.addEventListener("pointerup", event => finishBgMaterialPointerDrag(event), true);
+  window.addEventListener("pointercancel", event => finishBgMaterialPointerDrag(event, true), true);
+  $("#bgMaterialList").ondragstart = event => event.preventDefault();
   $("#bgPreview").onclick = event => {
     const preview = event.target.closest("[data-bg-preview-index]");
     if (preview) {
@@ -7564,6 +8025,13 @@ function bind() {
     pushBgHistory();
   };
   $("#bgAnnotationInspector").onclick = event => {
+    const custom = event.target.closest("[data-annotation-custom-select]");
+    if (custom) {
+      const kind = custom.dataset.annotationCustomSelect;
+      updateBgAnnotationColor(kind, storedBgAnnotationCustomColor(kind));
+      pushBgHistory();
+      return;
+    }
     const button = event.target.closest("[data-annotation-color-kind][data-annotation-color]");
     if (!button) return;
     updateBgAnnotationColor(button.dataset.annotationColorKind, button.dataset.annotationColor);
@@ -7574,8 +8042,11 @@ function bind() {
     ["#bgAnnotationNumberColor", "number"],
     ["#bgAnnotationMagnifierColor", "magnifier"],
   ].forEach(([selector, kind]) => {
-    $(selector).oninput = event => updateBgAnnotationColor(kind, event.target.value);
-    $(selector).onchange = pushBgHistory;
+    $(selector).oninput = event => saveBgAnnotationCustomColor(kind, event.target.value);
+    $(selector).onchange = () => {
+      saveBgAnnotationCustomColor(kind, $(selector).value);
+      pushBgHistory();
+    };
   });
   ["number", "mask", "blur", "magnifier"].forEach(kind => {
     const control = $(`#bgAnnotation${kind[0].toUpperCase()}${kind.slice(1)}Shadow`);
@@ -7590,13 +8061,17 @@ function bind() {
   };
   $("#bgAnnotationMaskRoundRadius").oninput = updateBgAnnotationMaskRadius;
   $("#bgAnnotationMaskRoundRadius").onchange = pushBgHistory;
-  $("#blueBgCanvas").oncontextmenu = blueBgContextMenu;
+  $("#blueBgStage").oncontextmenu = blueBgContextMenu;
   $("#blueBgStage").onpointerdown = blueBgStagePointerDown;
   $("#blueBgStage").onpointermove = blueBgStagePointerMove;
   $("#blueBgStage").onpointerup = blueBgStagePointerUp;
   $("#blueBgStage").onpointercancel = blueBgStagePointerUp;
-  $("#blueBgMoveUp").onclick = () => moveSelectedBlueBgLayer(1);
-  $("#blueBgMoveDown").onclick = () => moveSelectedBlueBgLayer(-1);
+  $("#blueBgMoveUp").onclick = () => moveContextBgMaterial(1);
+  $("#blueBgMoveDown").onclick = () => moveContextBgMaterial(-1);
+  $("#blueBgEditSelected").onclick = () => {
+    openSelectedBlueBgLayerInEditor().catch(error => blueBgStatus(error.message));
+  };
+  $("#blueBgDeleteMaterial").onclick = () => deleteBgMaterialCompletely();
   $("#blueBgStage").addEventListener("wheel", blueBgWheel, { passive: false });
   $("#blueBgStage").addEventListener("gesturestart", blueBgGestureStart, { passive: false });
   $("#blueBgStage").addEventListener("gesturechange", blueBgGestureChange, { passive: false });
@@ -7796,5 +8271,7 @@ function bind() {
 }
 
 bind();
+initializeBgAnnotationCustomColors();
+openBgBackgroundDialog();
 toggleBlueBgMode();
 showTab("bg");
