@@ -425,11 +425,17 @@ function showTab(id) {
 }
 
 function syncBgMaterialColumnWidth() {
-  const tab = document.querySelector('.tabs button[data-tab="bg"]');
   const workbench = $("#bg .bg-workbench");
-  if (!tab || !workbench || window.innerWidth <= 900) return;
-  const width = Math.round(tab.getBoundingClientRect().right - workbench.getBoundingClientRect().left);
-  if (width > 0) workbench.style.setProperty("--bg-material-column-width", `${width}px`);
+  if (!workbench) return;
+  if (window.innerWidth <= 900) {
+    workbench.style.removeProperty("--bg-material-column-width");
+    return;
+  }
+  // Keep the material pane stable across the local toolbox and the two-tab
+  // online shell. Deriving this width from a navigation button made the
+  // online pane expand across the viewport when its tabs were right-aligned.
+  const width = Math.round(Math.min(360, Math.max(240, window.innerWidth * 0.18)));
+  workbench.style.setProperty("--bg-material-column-width", `${width}px`);
 }
 
 async function api(path, payload) {
