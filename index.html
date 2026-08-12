@@ -7,13 +7,29 @@
   <meta name="theme-color" content="#ffffff">
   <title>荔图 · Li Tu</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css?v=20260811-material-drag1">
+  <link rel="stylesheet" href="./styles.css?v=20260812-studio-header1">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
+    <div class="topbar-zoom-controls" aria-label="画布缩放">
+      <label id="bgTopbarZoom" class="topbar-zoom-control">
+        <span>画布缩放</span>
+        <input id="bgCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
+        <strong id="bgCanvasZoomValue">100%</strong>
+      </label>
+      <label id="imageEditorTopbarZoom" class="topbar-zoom-control" hidden>
+        <span>画布缩放</span>
+        <input id="imageEditorCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
+        <strong id="imageEditorCanvasZoomValue">100%</strong>
+      </label>
+    </div>
     <div class="tab-buttons">
       <button data-tab="bg" class="active">图片美化</button>
       <button data-tab="imageEditor">图片编辑</button>
+    </div>
+    <div class="topbar-export-actions">
+      <button id="bgExportButton" class="topbar-export-button" type="button" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
+      <button id="imageEditorExport" class="topbar-export-button" type="button" title="导出 (⌘ E)" hidden disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
     </div>
     <button id="shutdownToolbox" class="shutdown-button" type="button" hidden>关闭</button>
   </nav>
@@ -190,14 +206,10 @@
         <div class="bg-workbench">
           <div class="bg-material-column">
             <aside class="bg-material-pane">
+              <button id="bgImportButton" class="bg-material-library-import" type="button" title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><span>导入图片</span></button>
               <div id="bgMaterialList" class="bg-material-list">
-                <div class="bg-material-import-card"><button class="bg-material-import-button canvas-empty-import" type="button" data-import-bg-material>导入图片</button></div>
               </div>
             </aside>
-            <label class="bg-canvas-zoom-panel">
-              <span class="bg-effect-control-heading"><span>画布缩放</span><strong id="bgCanvasZoomValue">100%</strong></span>
-              <input id="bgCanvasZoom" type="range" value="100" min="50" max="2000" step="1" disabled>
-            </label>
           </div>
           <div class="bg-output">
             <div id="blueBgEditor" class="blue-bg-editor" hidden>
@@ -371,8 +383,6 @@
             </aside>
           </div>
           <div class="bg-mode-toolbar" role="toolbar" aria-label="图片美化功能">
-            <button id="bgImportButton" type="button" aria-label="导入图片" title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></button>
-            <button id="bgExportButton" type="button" aria-label="导出" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="bgViewMode" type="button" aria-label="背景美化" title="背景美化 (V)"><span class="tool-symbol tool-symbol-move"></span><small>背景美化</small></button>
             <button id="bgBackgroundButton" type="button" aria-label="图片样式" title="图片样式 (B)" disabled><span class="tool-symbol tool-symbol-background"></span><small>图片样式</small></button>
             <button id="bgAddAnnotationNumber" type="button" aria-label="序号" title="序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
@@ -454,12 +464,8 @@
 
     <section id="imageEditor" class="panel">
       <div class="box image-editor-box">
+          <input id="imageEditorFile" type="file" accept="image/*" hidden>
           <div class="image-editor-actions">
-            <label class="annotation-import">
-              <input id="imageEditorFile" type="file" accept="image/*">
-              <span title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
-            </label>
-            <button id="imageEditorExport" type="button" aria-label="导出图片" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="imageEditorMoveMode" type="button" aria-label="查看" title="查看 (V)" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
             <button id="imageEditorRemoveMode" type="button" aria-label="区段删除" title="区段删除 (R)" disabled><span class="tool-symbol tool-symbol-remove-section"></span><small>删段</small></button>
             <button id="imageEditorCropMode" type="button" aria-label="画布裁切" title="画布裁切 (C)" disabled><span class="tool-symbol tool-symbol-crop"></span><small>裁切</small></button>
@@ -640,6 +646,6 @@
 
   <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
 
-  <script src="./app.js?v=20260811-material-drag1"></script>
+  <script src="./app.js?v=20260812-studio-header1"></script>
 </body>
 </html>

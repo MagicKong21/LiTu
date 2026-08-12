@@ -430,6 +430,10 @@ function showTab(id) {
   annotationState = id === "bg" ? bgAnnotationState : nativeAnnotationState;
   $$(".tabs button").forEach(btn => btn.classList.toggle("active", btn.dataset.tab === id));
   $$(".panel").forEach(panel => panel.classList.toggle("active", panel.id === id));
+  if ($("#bgTopbarZoom")) $("#bgTopbarZoom").hidden = id !== "bg";
+  if ($("#imageEditorTopbarZoom")) $("#imageEditorTopbarZoom").hidden = id !== "imageEditor";
+  if ($("#bgExportButton")) $("#bgExportButton").hidden = id !== "bg";
+  if ($("#imageEditorExport")) $("#imageEditorExport").hidden = id !== "imageEditor";
   if (id === "bg") requestAnimationFrame(syncBgMaterialColumnWidth);
   if (id === "distribution") scheduleDistributionScrollAnchors();
   if (id === "distribution" && !state.distribution.loaded && !state.distribution.loading) {
@@ -3300,17 +3304,11 @@ function renderBgMaterialList() {
     }
     wrap.appendChild(card);
   });
-  const importCard = document.createElement("div");
-  importCard.className = "bg-material-import-card";
-  const importButton = document.createElement("button");
-  importButton.type = "button";
-  importButton.className = "bg-material-import-button canvas-empty-import";
-  importButton.dataset.importBgMaterial = "";
-  importButton.textContent = "导入图片";
+  const importButton = $("#bgImportButton");
   importButton.disabled = blueBgState.layers.length >= BLUE_BG_MAX_LAYERS;
-  importButton.title = importButton.disabled ? `最多可导入 ${BLUE_BG_MAX_LAYERS} 张图片` : "导入图片";
-  importCard.appendChild(importButton);
-  wrap.appendChild(importCard);
+  importButton.title = importButton.disabled
+    ? `最多可导入 ${BLUE_BG_MAX_LAYERS} 张图片`
+    : "导入图片 (I / ⌘ V)";
   if (scroller) scroller.scrollTop = scrollTop;
 }
 
@@ -3731,6 +3729,7 @@ function updateImageEditorControls() {
   $("#imageEditorOptions").hidden = !["split", "blend"].includes(imageEditorState.mode);
   $("#imageEditorBlendWidthField").hidden = imageEditorState.mode !== "blend";
   $("#imageEditorApplyComposite").disabled = !imageEditorState.secondImage;
+  $("#imageEditorCanvasZoom").disabled = !hasImage;
   const stage = $("#imageEditorStage");
   stage.dataset.mode = imageEditorState.mode;
   stage.classList.toggle("has-selection", hasSelection || Boolean(imageEditorState.gradient));
@@ -4092,12 +4091,17 @@ function applyImageEditorZoom(zoom) {
   canvas.style.height = `${imageEditorState.baseDisplayHeight * imageEditorState.zoom}px`;
   canvas.style.imageRendering = imageEditorState.zoom >= 4 ? "pixelated" : "auto";
   $("#imageEditorStage").classList.toggle("at-base-zoom", imageEditorState.zoom <= 1.001);
+  const zoomPercent = Math.round(imageEditorState.zoom * 100);
+  $("#imageEditorCanvasZoom").value = String(zoomPercent);
+  $("#imageEditorCanvasZoomValue").textContent = `${zoomPercent}%`;
   requestAnimationFrame(syncImageEditorOverlays);
 }
 
 function resetImageEditorZoom() {
   const canvas = imageEditorCanvas();
   imageEditorState.zoom = 1;
+  $("#imageEditorCanvasZoom").value = "100";
+  $("#imageEditorCanvasZoomValue").textContent = "100%";
   imageEditorState.baseDisplayWidth = 0;
   imageEditorState.baseDisplayHeight = 0;
   canvas.style.width = "";
@@ -8004,6 +8008,16 @@ function bind() {
       rect.top + rect.height / 2
     );
     stage.focus();
+  };
+  $("#imageEditorCanvasZoom").oninput = () => {
+    if (!imageEditorState.hasImage) return;
+    const canvas = imageEditorCanvas();
+    const rect = canvas.getBoundingClientRect();
+    setImageEditorZoomAtPoint(
+      Number($("#imageEditorCanvasZoom").value) / 100,
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2
+    );
   };
   [
     ["#bgAddAnnotationNumber", "number"],
