@@ -861,7 +861,7 @@ body.is-dragging-bg-material * {
 }
 .bg-annotation-color-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
 }
@@ -871,31 +871,28 @@ body.is-dragging-bg-material * {
   display: block;
   box-sizing: border-box;
   min-width: 0;
-  height: 84px;
-  padding: 4px;
-  overflow: hidden;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
+  height: auto;
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 6px;
   color: #344054;
-  background: #fff;
+  background: transparent;
   cursor: pointer;
 }
 .bg-annotation-color-grid > button {
-  display: grid;
-  gap: 4px;
-  grid-template-rows: minmax(0, 1fr) 13px;
+  display: block;
 }
 .bg-annotation-custom-select {
-  display: grid;
-  gap: 4px;
+  display: block;
   width: 100%;
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   color: inherit;
   background: transparent;
-  grid-template-rows: minmax(0, 1fr) 13px;
 }
 .bg-annotation-custom-select:hover { border-color: transparent; }
 .bg-annotation-color-grid > button > span,
@@ -904,31 +901,34 @@ body.is-dragging-bg-material * {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  border: 1px solid rgba(17, 24, 39, .12);
-  border-radius: 5px;
+  border: 0;
+  border-radius: 6px;
   background: var(--swatch);
   overflow: hidden;
 }
 .bg-annotation-color-grid strong {
-  overflow: hidden;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: center;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  display: none;
 }
 .bg-annotation-color-grid > button.active,
 .bg-annotation-custom-color.active {
-  border-color: var(--brand);
   color: var(--brand-dark);
-  background: #eef6ff;
-  box-shadow: 0 0 0 2px rgba(22, 119, 255, .15);
+  background: transparent;
+  box-shadow: none;
+}
+.bg-annotation-color-grid > button:hover > span,
+.bg-annotation-custom-select:hover .bg-annotation-color-preview {
+  outline: 1px solid rgba(22, 119, 255, .55);
+  outline-offset: 2px;
+}
+.bg-annotation-color-grid > button.active > span,
+.bg-annotation-custom-color.active .bg-annotation-color-preview {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 .bg-annotation-color-picker-trigger {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   z-index: 2;
   width: 20px;
   height: 20px;
@@ -971,51 +971,60 @@ body.is-dragging-bg-material * {
 .bg-background-section { display: grid; gap: 7px; }
 .bg-background-section + .bg-background-section { padding-top: 10px; border-top: 1px solid #eef1f5; }
 .bg-background-section h3 { margin: 0; color: #475467; font-size: 12px; font-weight: 700; }
-.bg-background-tile-grid,
+.bg-background-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
 .bg-aspect-tile-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
-.bg-background-tile-slot { position: relative; min-width: 0; }
+.bg-background-tile-slot { position: relative; min-width: 0; aspect-ratio: 1; }
 .bg-background-tile {
-  display: grid;
-  gap: 4px;
+  display: block;
   width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
   min-width: 0;
-  padding: 4px;
-  border-radius: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
   color: #344054;
-  background: #fff;
+  background: transparent;
 }
 .bg-background-tile-preview {
   display: block;
   width: 100%;
+  height: 100%;
   aspect-ratio: 1;
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: 6px;
   background: #eef2f6;
 }
 .bg-background-tile-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .bg-background-tile strong {
-  overflow: hidden;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.25;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  display: none;
 }
-.bg-background-tile strong.bg-background-tile-label-compact {
-  font-size: 8.5px;
-  letter-spacing: -.18px;
-  text-overflow: clip;
-}
-.bg-background-tile.active,
 .bg-aspect-tile-grid button.active {
   border-color: var(--brand);
   color: var(--brand-dark);
   background: #eef6ff;
   box-shadow: 0 0 0 1px rgba(22, 119, 255, .14);
+}
+.bg-background-tile.active {
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+.bg-background-tile:hover .bg-background-tile-preview {
+  outline: 1px solid rgba(22, 119, 255, .55);
+  outline-offset: 2px;
+}
+.bg-background-tile.active .bg-background-tile-preview {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 .bg-tile-lizhi { background: #8cc6ff url('./assets/IMG_footer.png') center bottom / 100% auto no-repeat; }
 .bg-tile-blue { background: #3fb9ff; }
@@ -1032,8 +1041,8 @@ body.is-dragging-bg-material * {
 }
 .bg-background-color-picker {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 4px;
+  right: 4px;
   z-index: 2;
   width: 20px;
   height: 20px;

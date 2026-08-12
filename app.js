@@ -5052,6 +5052,12 @@ function syncBgAnnotationCustomColorTile(kind) {
 
 function initializeBgAnnotationCustomColors() {
   Object.keys(BG_ANNOTATION_CUSTOM_COLORS).forEach(syncBgAnnotationCustomColorTile);
+  $$(".bg-annotation-color-grid > button, .bg-annotation-custom-select").forEach(button => {
+    const label = button.querySelector("strong")?.textContent?.trim();
+    if (!label) return;
+    if (!button.title) button.title = label;
+    if (!button.getAttribute("aria-label")) button.setAttribute("aria-label", label);
+  });
 }
 
 function saveBgAnnotationCustomColor(kind, color) {
