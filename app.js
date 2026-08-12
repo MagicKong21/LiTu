@@ -3011,9 +3011,45 @@ function blueBgFilename() {
   return `${baseName}-小编工具箱.png`;
 }
 
+function cropCanvasToVisiblePixels(source) {
+  const ctx = source.getContext("2d", { willReadFrequently: true });
+  let pixels;
+  try {
+    pixels = ctx.getImageData(0, 0, source.width, source.height).data;
+  } catch (error) {
+    console.warn("无法读取透明像素边界，保留完整画布。", error);
+    return source;
+  }
+  let left = source.width;
+  let top = source.height;
+  let right = -1;
+  let bottom = -1;
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      if (pixels[(y * source.width + x) * 4 + 3] === 0) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < left || bottom < top) return source;
+  const width = right - left + 1;
+  const height = bottom - top + 1;
+  if (left === 0 && top === 0 && width === source.width && height === source.height) return source;
+  const cropped = document.createElement("canvas");
+  cropped.width = width;
+  cropped.height = height;
+  cropped.getContext("2d").drawImage(source, left, top, width, height, 0, 0, width, height);
+  return cropped;
+}
+
 function composeBlueBgOutputCanvas() {
   const output = document.createElement("canvas");
   renderBlueBgCanvas(true, output);
+  if (blueBgState.backgroundType === "transparent") {
+    return canvasScaledToWidth(cropCanvasToVisiblePixels(output));
+  }
   return output;
 }
 
