@@ -2763,7 +2763,7 @@ async function openSelectedBlueBgLayerInEditor() {
   hideBlueBgContextMenu();
   showTab("imageEditor");
   await loadImageEditorFile(material.file, { materialIndex, layerId: layer?.id ?? null });
-  imageEditorStatus("已从图片美化打开素材；编辑完成后按 ⌘ S 同步回图片美化。");
+  imageEditorStatus("已从美化 / 标注打开素材；编辑完成后按 Ctrl/⌘ S 同步回美化 / 标注。");
 }
 
 function deleteBgMaterialCompletely(materialIndex = bgContextMaterialIndex) {
@@ -2805,7 +2805,7 @@ async function syncImageEditorToBgMaterial() {
   const materialIndex = imageEditorState.sourceBgMaterialIndex;
   const material = Number.isInteger(materialIndex) ? bgMaterials[materialIndex] : null;
   if (!imageEditorState.hasImage || !material) {
-    imageEditorStatus("当前图片不是从图片美化打开的素材。");
+    imageEditorStatus("当前图片不是从美化 / 标注打开的素材。");
     return false;
   }
   const blob = await new Promise(resolve => imageEditorState.documentCanvas.toBlob(resolve, "image/png"));
@@ -2857,7 +2857,7 @@ async function syncImageEditorToBgMaterial() {
   updateBlueBgControls();
   renderBlueBgCanvas();
   pushBgHistory();
-  imageEditorStatus("已同步到图片美化：素材预览和画布前景图均已更新。");
+  imageEditorStatus("已同步到美化 / 标注：素材预览和画布前景图均已更新。");
   return true;
 }
 
@@ -2997,7 +2997,7 @@ function blueBgKeyDown(event) {
 
 function blueBgFilename() {
   const baseName = (blueBgState.sourceName || "image").replace(/\.[^.]+$/, "");
-  return `${baseName}-荔图.png`;
+  return `${baseName}-小编工具箱.png`;
 }
 
 function composeBlueBgOutputCanvas() {
@@ -3033,7 +3033,7 @@ function sendBgToAnnotation() {
       return;
     }
     const baseName = (blueBgState.sourceName || "image").replace(/\.[^.]+$/, "");
-    const file = new File([blob], `${baseName}-荔图.png`, { type: "image/png" });
+    const file = new File([blob], `${baseName}-小编工具箱.png`, { type: "image/png" });
     showTab("annotation");
     loadAnnotationImage(file);
   }, "image/png");
@@ -3308,7 +3308,7 @@ function renderBgMaterialList() {
   importButton.disabled = blueBgState.layers.length >= BLUE_BG_MAX_LAYERS;
   importButton.title = importButton.disabled
     ? `最多可导入 ${BLUE_BG_MAX_LAYERS} 张图片`
-    : "导入图片 (I / ⌘ V)";
+    : "导入图片 (I / Ctrl/⌘ V)";
   if (scroller) scroller.scrollTop = scrollTop;
 }
 
@@ -7665,9 +7665,9 @@ function imageModuleGlobalKeyDown(event) {
       return;
     }
   }
-  if (commandKey && event.key.toLowerCase() === "z") {
+  if (commandKey && (event.key.toLowerCase() === "z" || (!event.metaKey && event.key.toLowerCase() === "y"))) {
     event.preventDefault();
-    runActiveImageModuleHistory(event.shiftKey);
+    runActiveImageModuleHistory(event.shiftKey || event.key.toLowerCase() === "y");
     return;
   }
   if (event.altKey) {

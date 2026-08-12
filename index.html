@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="荔图（Li Tu）是一款在浏览器本地运行的图片美化与图片编辑工具。">
+  <meta name="description" content="小编工具箱是一款在浏览器本地运行的图片美化、标注与高级编辑工具。">
   <meta name="theme-color" content="#ffffff">
-  <title>荔图 · Li Tu</title>
+  <title>小编工具箱</title>
   <link rel="icon" type="image/png" href="./assets/toolbox-icon.png">
-  <link rel="stylesheet" href="./styles.css?v=20260812-studio-header1">
+  <link rel="stylesheet" href="./styles.css?v=20260812-xiaobian1">
 </head>
 <body>
   <nav class="tabs" aria-label="工具导航">
@@ -24,12 +24,12 @@
       </label>
     </div>
     <div class="tab-buttons">
-      <button data-tab="bg" class="active">图片美化</button>
-      <button data-tab="imageEditor">图片编辑</button>
+      <button data-tab="bg" class="active">美化 / 标注</button>
+      <button data-tab="imageEditor">高级编辑</button>
     </div>
     <div class="topbar-export-actions">
-      <button id="bgExportButton" class="topbar-export-button" type="button" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
-      <button id="imageEditorExport" class="topbar-export-button" type="button" title="导出 (⌘ E)" hidden disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
+      <button id="bgExportButton" class="topbar-export-button" type="button" title="导出 (Ctrl/⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
+      <button id="imageEditorExport" class="topbar-export-button" type="button" title="导出 (Ctrl/⌘ E)" hidden disabled><span class="tool-symbol tool-symbol-export"></span><span>导出</span></button>
     </div>
     <button id="shutdownToolbox" class="shutdown-button" type="button" hidden>关闭</button>
   </nav>
@@ -206,14 +206,14 @@
         <div class="bg-workbench">
           <div class="bg-material-column">
             <aside class="bg-material-pane">
-              <button id="bgImportButton" class="bg-material-library-import" type="button" title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><span>导入图片</span></button>
+              <button id="bgImportButton" class="bg-material-library-import" type="button" title="导入图片 (I / Ctrl/⌘ V)"><span class="tool-symbol tool-symbol-import"></span><span>导入图片</span></button>
               <div id="bgMaterialList" class="bg-material-list">
               </div>
             </aside>
           </div>
           <div class="bg-output">
             <div id="blueBgEditor" class="blue-bg-editor" hidden>
-              <div id="blueBgStage" class="blue-bg-stage" tabindex="0" aria-label="图片美化画布">
+              <div id="blueBgStage" class="blue-bg-stage" tabindex="0" aria-label="美化 / 标注画布">
                 <canvas id="blueBgCanvas" width="2000" height="1083"></canvas>
                 <canvas id="bgAnnotationCanvas" class="bg-annotation-canvas" width="2000" height="1083" hidden></canvas>
                 <div id="blueBgSelectionOverlay" class="image-editor-selection-overlay canvas-selection-overlay" hidden>
@@ -232,7 +232,7 @@
               <div id="blueBgContextMenu" class="blue-bg-context-menu" role="menu" hidden>
                 <button id="blueBgMoveUp" type="button" role="menuitem">上移一层</button>
                 <button id="blueBgMoveDown" type="button" role="menuitem">下移一层</button>
-                <button id="blueBgEditSelected" type="button" role="menuitem">图片编辑</button>
+                <button id="blueBgEditSelected" type="button" role="menuitem">高级编辑</button>
                 <button id="blueBgDeleteMaterial" class="context-danger" type="button" role="menuitem">删除</button>
               </div>
               <div class="blue-bg-footer">
@@ -382,7 +382,7 @@
               </div>
             </aside>
           </div>
-          <div class="bg-mode-toolbar" role="toolbar" aria-label="图片美化功能">
+          <div class="bg-mode-toolbar" role="toolbar" aria-label="美化 / 标注功能">
             <button id="bgViewMode" type="button" aria-label="背景美化" title="背景美化 (V)"><span class="tool-symbol tool-symbol-move"></span><small>背景美化</small></button>
             <button id="bgBackgroundButton" type="button" aria-label="图片样式" title="图片样式 (B)" disabled><span class="tool-symbol tool-symbol-background"></span><small>图片样式</small></button>
             <button id="bgAddAnnotationNumber" type="button" aria-label="序号" title="序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
@@ -390,8 +390,8 @@
             <button id="bgAddAnnotationBlur" type="button" aria-label="模糊" title="模糊 (F)" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
             <button id="bgAddAnnotationMagnifier" type="button" aria-label="放大镜" title="放大镜 (G)" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
             <button id="bgDeleteSelected" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选 (Delete)" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
-            <button id="bgUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="bgRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="bgUndo" type="button" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="bgRedo" type="button" aria-label="重做" title="重做 (Ctrl Y / Ctrl/⌘ Shift Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
           </div>
         </div>
       </div>
@@ -402,17 +402,17 @@
         <div class="annotation-actions">
             <label class="annotation-import">
               <input id="annotationFile" type="file" accept="image/*">
-              <span title="导入图片 (I / ⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
+              <span title="导入图片 (I / Ctrl/⌘ V)"><span class="tool-symbol tool-symbol-import"></span><small>导入</small></span>
             </label>
-            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出 (⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
+            <button id="exportAnnotation" type="button" aria-label="导出图片" title="导出 (Ctrl/⌘ E)" disabled><span class="tool-symbol tool-symbol-export"></span><small>导出</small></button>
             <button id="annotationViewMode" type="button" aria-label="查看" title="查看 (V)" disabled><span class="tool-symbol tool-symbol-view"></span><small>查看</small></button>
             <button id="addAnnotationNumber" type="button" aria-label="添加序号" title="添加序号 (N)" disabled><span class="tool-symbol tool-symbol-number"></span><small>序号</small></button>
             <button id="addAnnotationMask" type="button" aria-label="添加遮挡" title="添加遮挡 (M)" disabled><span class="tool-symbol tool-symbol-mask"></span><small>遮挡</small></button>
             <button id="addAnnotationBlur" type="button" aria-label="高斯模糊" title="高斯模糊 (F)" disabled><span class="tool-symbol tool-symbol-blur"></span><small>模糊</small></button>
             <button id="addAnnotationMagnifier" type="button" aria-label="添加放大镜" title="添加放大镜 (G)" disabled><span class="tool-symbol tool-symbol-magnifier"></span><small>放大镜</small></button>
             <button id="deleteAnnotation" class="annotation-delete" type="button" aria-label="删除所选" title="删除所选 (Delete)" disabled><span class="tool-symbol tool-symbol-delete"></span><small>删除</small></button>
-            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="annotationRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="annotationUndo" type="button" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="annotationRedo" type="button" aria-label="重做" title="重做 (Ctrl Y / Ctrl/⌘ Shift Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
         </div>
         <div class="annotation-stage-wrap">
           <div id="annotationBlurControls" class="annotation-blur-controls" hidden>
@@ -478,8 +478,8 @@
                 <button id="imageEditorWindowMode" type="button" aria-label="窗口提取" title="窗口提取 (W)" disabled><span class="tool-symbol tool-symbol-window"></span><small>窗口</small></button>
               </div>
             </div>
-            <button id="imageEditorUndo" type="button" aria-label="撤销" title="撤销 (⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
-            <button id="imageEditorRedo" type="button" aria-label="重做" title="重做 (⇧ ⌘ Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
+            <button id="imageEditorUndo" type="button" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled><span class="tool-symbol tool-symbol-undo"></span><small>撤销</small></button>
+            <button id="imageEditorRedo" type="button" aria-label="重做" title="重做 (Ctrl Y / Ctrl/⌘ Shift Z)" disabled><span class="tool-symbol tool-symbol-redo"></span><small>重做</small></button>
           </div>
         <div id="imageEditorOptions" class="image-editor-options" hidden>
           <div id="imageEditorCompositeControls" class="image-editor-composite-controls" hidden>
@@ -500,7 +500,7 @@
             <button id="imageEditorApplyComposite" class="primary" type="button" disabled>应用合成</button>
           </div>
         </div>
-        <div id="imageEditorStage" class="image-editor-stage" tabindex="0" aria-label="图片编辑画布">
+        <div id="imageEditorStage" class="image-editor-stage" tabindex="0" aria-label="高级编辑画布">
           <canvas id="imageEditorCanvas"></canvas>
           <div id="imageEditorSelectionOverlay" class="image-editor-selection-overlay" hidden>
             <i data-selection-handle="nw"></i>
@@ -513,7 +513,7 @@
             <i data-selection-handle="w"></i>
             <div class="image-editor-selection-actions">
               <button id="imageEditorApplySelection" class="selection-confirm" type="button" aria-label="应用所选区域" title="应用所选区域">✓</button>
-              <button id="imageEditorCancelSelection" class="selection-cancel" type="button" aria-label="取消框选" title="取消框选 (⌘ D)">×</button>
+              <button id="imageEditorCancelSelection" class="selection-cancel" type="button" aria-label="取消框选" title="取消框选 (Ctrl/⌘ D)">×</button>
             </div>
           </div>
           <div id="imageEditorGradientOverlay" class="image-editor-gradient-overlay" hidden>
@@ -644,8 +644,8 @@
     </section>
   </main>
 
-  <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">荔图 · Li Tu</div>
+  <div class="tool-version"><img src="./assets/toolbox-icon.png" alt="" aria-hidden="true">小编工具箱</div>
 
-  <script src="./app.js?v=20260812-studio-header1"></script>
+  <script src="./app.js?v=20260812-xiaobian1"></script>
 </body>
 </html>
