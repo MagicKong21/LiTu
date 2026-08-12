@@ -697,6 +697,12 @@ body.is-dragging-bg-material * {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.bg-effect-control-heading > strong,
+.bg-annotation-value-actions > strong {
+  color: var(--brand-dark);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .bg-effect-toolbar.is-disabled .bg-effect-control strong { color: #98a2b3; }
 .blue-bg-size-field {
   display: grid;
@@ -998,6 +1004,11 @@ body.is-dragging-bg-material * {
   line-height: 1.25;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.bg-background-tile strong.bg-background-tile-label-compact {
+  font-size: 8.5px;
+  letter-spacing: -.18px;
+  text-overflow: clip;
 }
 .bg-background-tile.active,
 .bg-aspect-tile-grid button.active {

@@ -1654,6 +1654,14 @@ function renderBlueBgCanvas(forExport = false, targetCanvas = blueBgCanvas()) {
   targetCanvas.height = blueBgState.canvasHeight;
   const ctx = targetCanvas.getContext("2d");
   ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+  if (!blueBgState.layers.length && !forExport) {
+    blueBgState.snapGuides = { vertical: [], horizontal: [] };
+    $("#bgAnnotationCanvas").hidden = true;
+    syncCanvasSelectionOverlays(
+      $("#blueBgStage"), targetCanvas, $("#blueBgSelectionOverlay"), []
+    );
+    return;
+  }
   drawUnifiedBackground(ctx, targetCanvas);
   blueBgState.layers.forEach(layer => drawBlueBgLayer(ctx, layer));
   syncBgAnnotationSource(targetCanvas);
@@ -1851,7 +1859,7 @@ function drawUnifiedBackground(ctx, canvas) {
     return;
   }
   if (type === "lizhi") {
-    // 荔图默认背景沿用原始自动加底的浅蓝底色。这里不能复用
+    // 荔枝默认背景沿用原始自动加底的浅蓝底色。这里不能复用
     // “纯色”的默认蓝色，否则页眉、页脚之间会露出一条深蓝色带。
     ctx.fillStyle = LIZHI_DEFAULT_COLOR;
     ctx.fillRect(0, 0, width, height);
@@ -1884,7 +1892,9 @@ function renderBgWallpaperChoices() {
     button.className = "bg-background-tile";
     button.dataset.bgType = "wallpaper";
     button.dataset.bgWallpaper = wallpaper.id;
-    button.innerHTML = `<span class="bg-background-tile-preview"><img src="${wallpaper.url}" alt=""></span><strong>${wallpaper.label.replace("macOS ", "")}</strong>`;
+    const label = wallpaper.label.replace("macOS ", "");
+    const compactClass = label.length >= 10 ? " bg-background-tile-label-compact" : "";
+    button.innerHTML = `<span class="bg-background-tile-preview"><img src="${wallpaper.url}" alt=""></span><strong class="${compactClass.trim()}">${label}</strong>`;
     button.title = `${wallpaper.label} · 来源：${wallpaper.source}`;
     wrap.appendChild(button);
   });
@@ -2087,7 +2097,7 @@ function syncBgEffectToolbar() {
   const selectedItems = blueprint ? selectedBlueBgLayers() : selectedDefaultBgMaterials();
   const selected = selectedItems[0] || null;
   const disabled = !selected;
-  const canvasZoomDisabled = $("#blueBgEditor").hidden;
+  const canvasZoomDisabled = $("#blueBgEditor").hidden || !blueBgState.layers.length;
   const toolbar = $("#bgEffectToolbar");
   toolbar.classList.toggle("is-disabled", disabled);
   $("#bgDeleteSelected").disabled = disabled;
@@ -5007,8 +5017,9 @@ function updateBgAnnotationControls() {
 function syncBgAnnotationColorTiles(kind, color) {
   const normalized = String(color || "").toLowerCase();
   const buttons = $$(`[data-annotation-color-kind="${kind}"]`, $("#bgAnnotationInspector"));
+  const matchingPreset = buttons.find(button => button.dataset.annotationColor.toLowerCase() === normalized);
   buttons.forEach(button => {
-    button.classList.toggle("active", button.dataset.annotationColor.toLowerCase() === normalized);
+    button.classList.toggle("active", button === matchingPreset);
   });
   const inputId = {
     mask: "#bgAnnotationMaskColor",
@@ -5017,7 +5028,7 @@ function syncBgAnnotationColorTiles(kind, color) {
   }[kind];
   const custom = $(inputId)?.closest(".bg-annotation-custom-color");
   if (custom) {
-    custom.classList.toggle("active", storedBgAnnotationCustomColor(kind) === normalized);
+    custom.classList.toggle("active", !matchingPreset && storedBgAnnotationCustomColor(kind) === normalized);
   }
 }
 
