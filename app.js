@@ -1837,6 +1837,7 @@ function drawUnifiedBackground(ctx, canvas) {
   const width = canvas.width;
   const height = canvas.height;
   const type = blueBgState.backgroundType;
+  if (type === "transparent") return;
   if (type === "image" || type === "wallpaper") {
     ctx.fillStyle = "#eaf0f6";
     ctx.fillRect(0, 0, width, height);
@@ -2068,7 +2069,7 @@ async function applyBgBackgroundSettings() {
 }
 
 function backgroundTypeLabel(type) {
-  return { lizhi: "荔枝默认", blue: "蓝色", solid: "自定义颜色", gradient: "渐变色", image: "自定义图片", wallpaper: "macOS 壁纸" }[type] || type;
+  return { lizhi: "荔枝默认", blue: "蓝色", solid: "自定义颜色", transparent: "无背景", gradient: "渐变色", image: "自定义图片", wallpaper: "macOS 壁纸" }[type] || type;
 }
 
 function updateBgControlsAfterBackgroundChange() {

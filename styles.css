@@ -1020,6 +1020,16 @@ body.is-dragging-bg-material * {
 .bg-tile-lizhi { background: #8cc6ff url('./assets/IMG_footer.png') center bottom / 100% auto no-repeat; }
 .bg-tile-blue { background: #3fb9ff; }
 .bg-tile-solid { background: #3fb9ff; }
+.bg-tile-transparent {
+  background:
+    linear-gradient(45deg, #e7ebf0 25%, transparent 25%),
+    linear-gradient(-45deg, #e7ebf0 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e7ebf0 75%),
+    linear-gradient(-45deg, transparent 75%, #e7ebf0 75%),
+    #fff;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+  background-size: 14px 14px;
+}
 .bg-background-color-picker {
   position: absolute;
   top: 8px;
