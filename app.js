@@ -1570,13 +1570,20 @@ function drawBlueBgLayer(ctx, layer) {
     : 0;
   if (layer.shadow) {
     const sigma = blueBgShadowSigma(layer);
-    const surface = blueBgLayerSurface(layer, shouldClipRound, radius, sigma * 2);
+    const renderScale = canvasContextScale(ctx);
+    const surface = blueBgLayerSurface(layer, shouldClipRound, radius, sigma * 2, renderScale);
     ctx.save();
     ctx.shadowColor = "rgba(0, 0, 0, .25)";
-    ctx.shadowBlur = sigma;
+    ctx.shadowBlur = sigma * renderScale;
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    ctx.drawImage(surface.canvas, layer.x - surface.padding, layer.y - surface.padding);
+    ctx.drawImage(
+      surface.canvas,
+      layer.x - surface.padding,
+      layer.y - surface.padding,
+      surface.width,
+      surface.height
+    );
     ctx.restore();
   }
   if (shouldClipRound) {
@@ -1594,11 +1601,16 @@ function blueBgShadowSigma(layer) {
   return Math.max(2, Math.min(50, Math.round(Math.min(layer.width, layer.height) / 33)));
 }
 
-function blueBgLayerSurface(layer, shouldClipRound, radius, padding) {
-  const width = Math.max(1, Math.ceil(layer.width));
-  const height = Math.max(1, Math.ceil(layer.height));
-  const inset = Math.ceil(padding);
-  const cacheKey = `${width}:${height}:${shouldClipRound ? Math.round(radius * 100) : 0}:${inset}`;
+function canvasContextScale(ctx) {
+  const transform = ctx.getTransform?.();
+  return transform ? Math.max(0.01, Math.hypot(transform.a, transform.b)) : 1;
+}
+
+function blueBgLayerSurface(layer, shouldClipRound, radius, padding, renderScale = 1) {
+  const width = Math.max(1, Math.ceil(layer.width * renderScale));
+  const height = Math.max(1, Math.ceil(layer.height * renderScale));
+  const inset = Math.ceil(padding * renderScale);
+  const cacheKey = `${width}:${height}:${shouldClipRound ? Math.round(radius * renderScale * 100) : 0}:${inset}`;
   const cached = blueBgLayerSurfaceCache.get(layer);
   if (cached?.key === cacheKey && cached.image === layer.image) return cached.surface;
   const canvas = document.createElement("canvas");
@@ -1606,11 +1618,16 @@ function blueBgLayerSurface(layer, shouldClipRound, radius, padding) {
   canvas.height = height + inset * 2;
   const surfaceCtx = canvas.getContext("2d");
   if (shouldClipRound) {
-    continuousRoundedRect(surfaceCtx, inset, inset, width, height, radius);
+    continuousRoundedRect(surfaceCtx, inset, inset, width, height, radius * renderScale);
     surfaceCtx.clip();
   }
   surfaceCtx.drawImage(layer.image, inset, inset, width, height);
-  const surface = { canvas, padding: inset };
+  const surface = {
+    canvas,
+    padding: inset / renderScale,
+    width: canvas.width / renderScale,
+    height: canvas.height / renderScale,
+  };
   blueBgLayerSurfaceCache.set(layer, { key: cacheKey, image: layer.image, surface });
   return surface;
 }
@@ -3019,18 +3036,36 @@ function blueBgTransparentExportBounds() {
   return unionBounds([...layerBounds, ...annotationBounds]);
 }
 
+function blueBgTransparentExportScale(bounds) {
+  const sourceDensity = Math.max(
+    0.01,
+    ...blueBgState.layers.map(layer => Math.max(
+      layer.baseWidth / Math.max(1, layer.width),
+      layer.baseHeight / Math.max(1, layer.height)
+    ))
+  );
+  // 浏览器画布存在尺寸上限；只在确有必要时限制超大合成图，普通单图
+  // 会严格使用素材自身的像素密度，不受 2000px 画布规格影响。
+  const maxCanvasSide = 16384;
+  return Math.min(
+    sourceDensity,
+    maxCanvasSide / Math.max(1, bounds.width),
+    maxCanvasSide / Math.max(1, bounds.height)
+  );
+}
+
 function composeTransparentBlueBgOutputCanvas() {
   const bounds = blueBgTransparentExportBounds();
   if (!bounds) return document.createElement("canvas");
-  const left = Math.floor(bounds.x);
-  const top = Math.floor(bounds.y);
-  const right = Math.ceil(bounds.x + bounds.width);
-  const bottom = Math.ceil(bounds.y + bounds.height);
+  const scale = blueBgTransparentExportScale(bounds);
   const output = document.createElement("canvas");
-  output.width = Math.max(1, right - left);
-  output.height = Math.max(1, bottom - top);
+  output.width = Math.max(1, Math.round(bounds.width * scale));
+  output.height = Math.max(1, Math.round(bounds.height * scale));
   const ctx = output.getContext("2d");
-  ctx.translate(-left, -top);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.scale(scale, scale);
+  ctx.translate(-bounds.x, -bounds.y);
   blueBgState.layers.forEach(layer => drawBlueBgLayer(ctx, layer));
   syncBgAnnotationSource(blueBgCanvas());
   withAnnotationState(bgAnnotationState, () => {
@@ -4699,7 +4734,7 @@ function restoreImageEditorHistory(index) {
 
 function exportImageEditorImage() {
   if (!imageEditorState.hasImage) return;
-  const exportCanvas = canvasScaledToWidth(imageEditorState.documentCanvas);
+  const exportCanvas = imageEditorState.documentCanvas;
   exportCanvas.toBlob(blob => {
     if (!blob) return;
     const baseName = imageEditorState.sourceName.replace(/\.[^.]+$/, "") || "image";
