@@ -2077,6 +2077,8 @@ async function applyBgBackgroundSettings() {
       clampBlueBgLayer(layer);
     });
   }
+  $("#blueBgStage")?.classList.toggle("is-transparent-background", type === "transparent");
+  if (type === "transparent") expandTransparentBlueBgCanvas();
   renderBlueBgCanvas();
   resetBlueBgZoom();
   pushBgHistory();
@@ -2180,9 +2182,101 @@ function clampBlueBgLayer(layer) {
     128,
     Number.isFinite(radius) ? radius : SYSTEM_CORNER_RADIUS
   ));
+  if (blueBgState.backgroundType === "transparent") return;
   const minVisible = 24;
   layer.x = Math.max(-layer.width + minVisible, Math.min(canvas.width - minVisible, layer.x));
   layer.y = Math.max(-layer.height + minVisible, Math.min(canvas.height - minVisible, layer.y));
+}
+
+function shiftBgAnnotationItem(item, offsetX, offsetY) {
+  if (item.type === "magnifier") {
+    item.sourceX += offsetX;
+    item.sourceY += offsetY;
+    item.lensX += offsetX;
+    item.lensY += offsetY;
+    return;
+  }
+  item.x += offsetX;
+  item.y += offsetY;
+}
+
+function shiftBlueBgInteraction(offsetX, offsetY) {
+  const interaction = blueBgState.interaction;
+  if (!interaction) return;
+  if (interaction.start) {
+    interaction.start.x += offsetX;
+    interaction.start.y += offsetY;
+  }
+  if (interaction.original) {
+    interaction.original.x += offsetX;
+    interaction.original.y += offsetY;
+  }
+  interaction.originals?.forEach(original => {
+    original.x += offsetX;
+    original.y += offsetY;
+  });
+}
+
+function shiftBgAnnotationInteraction(offsetX, offsetY) {
+  const interaction = bgAnnotationState.interaction;
+  if (!interaction) return;
+  if (interaction.start) {
+    interaction.start.x += offsetX;
+    interaction.start.y += offsetY;
+  }
+  if (interaction.original) {
+    shiftBgAnnotationItem(interaction.original, offsetX, offsetY);
+  }
+  interaction.originals?.forEach(original => {
+    shiftBgAnnotationItem(original, offsetX, offsetY);
+  });
+}
+
+function expandTransparentBlueBgCanvas() {
+  if (blueBgState.backgroundType !== "transparent" || !blueBgState.layers.length) return false;
+  const canvas = blueBgCanvas();
+  const bounds = blueBgTransparentExportBounds();
+  if (!bounds) return false;
+  const oldWidth = canvas.width;
+  const oldHeight = canvas.height;
+  const stage = $("#blueBgStage");
+  const previousScrollLeft = stage?.scrollLeft || 0;
+  const previousScrollTop = stage?.scrollTop || 0;
+  const rect = canvas.getBoundingClientRect();
+  const displayScaleX = rect.width / Math.max(1, oldWidth);
+  const displayScaleY = rect.height / Math.max(1, oldHeight);
+  const margin = Math.max(160, Math.round(Math.min(oldWidth, oldHeight) * 0.12));
+  const leftGrowth = Math.max(0, Math.ceil(margin - bounds.x));
+  const topGrowth = Math.max(0, Math.ceil(margin - bounds.y));
+  const rightGrowth = Math.max(0, Math.ceil(bounds.x + bounds.width + margin - oldWidth));
+  const bottomGrowth = Math.max(0, Math.ceil(bounds.y + bounds.height + margin - oldHeight));
+  if (!leftGrowth && !topGrowth && !rightGrowth && !bottomGrowth) return false;
+
+  blueBgState.layers.forEach(layer => {
+    layer.x += leftGrowth;
+    layer.y += topGrowth;
+  });
+  bgAnnotationState.items.forEach(item => shiftBgAnnotationItem(item, leftGrowth, topGrowth));
+  shiftBlueBgInteraction(leftGrowth, topGrowth);
+  shiftBgAnnotationInteraction(leftGrowth, topGrowth);
+  blueBgState.canvasWidth = oldWidth + leftGrowth + rightGrowth;
+  blueBgState.canvasHeight = oldHeight + topGrowth + bottomGrowth;
+  canvas.width = blueBgState.canvasWidth;
+  canvas.height = blueBgState.canvasHeight;
+  blueBgState.baseDisplayWidth = blueBgState.canvasWidth * displayScaleX / Math.max(0.01, blueBgState.zoom);
+  blueBgState.baseDisplayHeight = blueBgState.canvasHeight * displayScaleY / Math.max(0.01, blueBgState.zoom);
+  canvas.style.width = `${blueBgState.canvasWidth * displayScaleX}px`;
+  canvas.style.height = `${blueBgState.canvasHeight * displayScaleY}px`;
+  const annotationCanvas = $("#bgAnnotationCanvas");
+  annotationCanvas.width = blueBgState.canvasWidth;
+  annotationCanvas.height = blueBgState.canvasHeight;
+  annotationCanvas.style.width = canvas.style.width;
+  annotationCanvas.style.height = canvas.style.height;
+  if (stage) {
+    stage.scrollLeft = previousScrollLeft + leftGrowth * displayScaleX;
+    stage.scrollTop = previousScrollTop + topGrowth * displayScaleY;
+  }
+  return true;
 }
 
 async function addBlueBgFiles(fileList, reset = false) {
@@ -2551,6 +2645,7 @@ function blueBgPointerMove(event) {
     }
   }
   clampBlueBgLayer(layer);
+  expandTransparentBlueBgCanvas();
   updateBlueBgControls();
   renderBlueBgCanvas();
   event.preventDefault();
@@ -2925,6 +3020,7 @@ function updateBlueBgLayerScale() {
     layer.x = centerX - layer.width / 2;
     layer.y = centerY - layer.height / 2;
   });
+  expandTransparentBlueBgCanvas();
   updateBlueBgControls();
   renderBlueBgCanvas();
   blueBgStatus(`所选图片缩放比例 ${Math.round(scale * 100)}% · 中心位置保持不变`);
@@ -3019,6 +3115,7 @@ function blueBgKeyDown(event) {
     layer.y += direction[1] * step;
     clampBlueBgLayer(layer);
   });
+  expandTransparentBlueBgCanvas();
   renderBlueBgCanvas();
   blueBgStatus(`已微调 ${step}px · 共 ${blueBgState.layers.length} 张图片`);
 }
@@ -6287,6 +6384,7 @@ function annotationPointerMove(event) {
   } else {
     resizeAnnotationMask(item, interaction, point, event);
   }
+  if (annotationState.host === "bg") expandTransparentBlueBgCanvas();
   renderAnnotationCanvas();
   event.preventDefault();
 }

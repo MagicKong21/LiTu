@@ -747,6 +747,10 @@ body.is-dragging-bg-material * {
   border-color: var(--brand);
   box-shadow: 0 0 0 2px rgba(22, 119, 255, .15);
 }
+.blue-bg-stage.is-transparent-background,
+.blue-bg-stage.is-transparent-background.at-base-zoom {
+  overflow: auto;
+}
 .blue-bg-stage canvas {
   grid-area: 1 / 1;
   display: block;
